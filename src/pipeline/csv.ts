@@ -7,7 +7,7 @@ export type ParsedCsv = {
 
 export class CsvError extends Error {}
 
-function pickDelimiter(text: string): string {
+export function pickDelimiter(text: string): string {
   const firstLine = text.split(/\r?\n/, 1)[0] ?? "";
   const counts: [string, number][] = [",", ";", "\t", "|"].map((delimiter) => [
     delimiter,

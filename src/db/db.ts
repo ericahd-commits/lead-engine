@@ -1,3 +1,4 @@
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
 
@@ -65,11 +66,45 @@ export async function createPostgresDb(connectionString: string): Promise<Db> {
   return wrap(pool, false);
 }
 
+// Two processes writing to one file database corrupt it beyond repair, so the folder is claimed
+// with a lock file naming the process that has it open. A lock left by a dead process is ignored.
+function claimDataDir(dataDir: string): void {
+  const lock = `${dataDir}.lock`;
+  if (existsSync(lock)) {
+    const owner = Number(readFileSync(lock, "utf8"));
+    let alive = false;
+    if (Number.isInteger(owner) && owner > 0 && owner !== process.pid) {
+      try {
+        process.kill(owner, 0);
+        alive = true;
+      } catch (error) {
+        alive = (error as NodeJS.ErrnoException).code === "EPERM";
+      }
+    }
+    if (alive) {
+      throw new Error(
+        `The local database at ${dataDir} is already open in another process (pid ${owner}). Stop that one first; opening it twice would corrupt it.`,
+      );
+    }
+  }
+  writeFileSync(lock, String(process.pid));
+  process.once("exit", () => {
+    try {
+      if (readFileSync(lock, "utf8") === String(process.pid)) rmSync(lock);
+    } catch {
+      // The lock is already gone.
+    }
+  });
+}
+
 // PGlite: real Postgres compiled to run in-process. Used for tests (in memory) and for local
 // work with no DATABASE_URL (a folder on disk). Never used in production.
 export async function createPgliteDb(dataDir?: string): Promise<Db> {
   const { PGlite } = await import("@electric-sql/pglite");
-  if (dataDir) await mkdir(path.dirname(dataDir), { recursive: true });
+  if (dataDir) {
+    await mkdir(path.dirname(dataDir), { recursive: true });
+    claimDataDir(dataDir);
+  }
   const lite = dataDir ? new PGlite(dataDir) : new PGlite();
   await lite.waitReady;
 

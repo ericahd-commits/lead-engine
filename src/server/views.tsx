@@ -62,6 +62,7 @@ const NAV: { href: string; label: string; key: string; admin?: boolean }[] = [
   { href: "/leads?status=in_review", label: "Review queue", key: "review" },
   { href: "/leads", label: "All leads", key: "leads" },
   { href: "/dnc", label: "DNC", key: "dnc" },
+  { href: "/existing", label: "Existing records", key: "known" },
   { href: "/exports", label: "Exports", key: "exports" },
   { href: "/approvals", label: "Approvals", key: "approvals" },
   { href: "/audit-log", label: "Audit log", key: "audit" },
@@ -138,7 +139,11 @@ export const Page: FC<{ c: Ctx; title: string; active: string; sub?: string; chi
   );
 };
 
-export const Chip: FC<{ value: string }> = ({ value }) => <span class={`chip ${value}`}>{value.replace(/_/g, " ")}</span>;
+const STATUS_LABELS: Record<string, string> = { in_vici: "in VICIdial", in_close: "in Close", blocked_dnc: "blocked DNC" };
+
+export const statusLabel = (value: string) => STATUS_LABELS[value] ?? value.replace(/_/g, " ");
+
+export const Chip: FC<{ value: string }> = ({ value }) => <span class={`chip ${value}`}>{statusLabel(value)}</span>;
 
 export function when(value: Date | string | null | undefined): string {
   if (!value) return "";
@@ -184,6 +189,8 @@ const ESTIMATE_LABELS: Record<string, string> = {
   name: "List",
   numbers: "Numbers",
   leadsUnblocked: "Leads that stop being blocked",
+  system: "Exported from",
+  leadsReleased: "Leads that stop being marked as already there",
   canBeUndone: "Can be undone",
 };
 

@@ -104,7 +104,7 @@ export async function recheckDnc(db: Db, user: { id: number; email: string }): P
        FROM leads l
        JOIN dnc_numbers n ON n.phone_e164 = l.phone_e164
        JOIN dnc_lists d ON d.id = n.list_id
-       WHERE l.status IN ('in_review', 'approved', 'rejected', 'duplicate')
+       WHERE l.status IN ('in_review', 'approved', 'rejected', 'duplicate', 'in_vici', 'in_close')
        ORDER BY l.id, n.list_id`,
     );
     if (hits.length > 0) {

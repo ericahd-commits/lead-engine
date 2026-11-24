@@ -1,5 +1,6 @@
 import { logAudit } from "./audit.js";
 import { many, one, type Db } from "./db/db.js";
+import { KNOWN_LABEL, recheckKnown, type KnownKind } from "./pipeline/known.js";
 
 export class DeleteError extends Error {}
 
@@ -157,8 +158,71 @@ export async function executeDncListDelete(db: Db, listId: number, user: User): 
       `UPDATE leads SET dnc_checked_at = NULL
        WHERE dnc_checked_at IS NOT NULL AND status <> 'exported' AND NOT EXISTS (SELECT 1 FROM dnc_lists)`,
     );
+    // An unblocked lead may still be a record that already exists in VICIdial or Close.
+    await recheckKnown(tx, user);
 
     await logAudit(tx, user, "delete.dnc_list_deleted", `dnc_list:${listId}`, info);
+    return info;
+  });
+}
+
+export type KnownListDeleteInfo = {
+  kind: "known_list";
+  listId: number;
+  system: string;
+  name: string;
+  numbers: number;
+  // Leads marked as already in that system only because of this file. They go back to review.
+  leadsReleased: number;
+  canBeUndone: false;
+};
+
+export async function describeKnownListDelete(db: Db, listId: number): Promise<KnownListDeleteInfo> {
+  const row = await one<{ kind: KnownKind; name: string; numbers: number; released: number }>(
+    db,
+    `SELECT k.kind, k.name,
+       (SELECT count(*)::int FROM known_numbers n WHERE n.list_id = k.id) AS numbers,
+       (SELECT count(*)::int FROM leads l
+          WHERE l.status IN ('in_vici', 'in_close')
+            AND EXISTS (SELECT 1 FROM known_numbers n WHERE n.phone_e164 = l.phone_e164 AND n.list_id = k.id)
+            AND NOT EXISTS (SELECT 1 FROM known_numbers n WHERE n.phone_e164 = l.phone_e164 AND n.list_id <> k.id)) AS released
+     FROM known_lists k WHERE k.id = $1`,
+    [listId],
+  );
+  if (!row) throw new DeleteError("That file does not exist.");
+  return {
+    kind: "known_list",
+    listId,
+    system: KNOWN_LABEL[row.kind],
+    name: row.name,
+    numbers: row.numbers,
+    leadsReleased: row.released,
+    canBeUndone: false,
+  };
+}
+
+export async function executeKnownListDelete(db: Db, listId: number, user: User): Promise<KnownListDeleteInfo> {
+  return await db.tx(async (tx) => {
+    const info = await describeKnownListDelete(tx, listId);
+    await tx.query("DELETE FROM known_lists WHERE id = $1", [listId]);
+    await tx.query("DELETE FROM dedupe_matches WHERE match_type IN ('vici', 'close') AND matched_ref = $1", [
+      `known_list:${listId}`,
+    ]);
+
+    // Every lead this file was the stated reason for goes back to where it would have been
+    // without it. The re-check below then marks again any that another file still covers.
+    await tx.query(
+      `UPDATE leads l SET updated_at = now(),
+         status = CASE WHEN EXISTS (SELECT 1 FROM dedupe_matches m WHERE m.lead_id = l.id AND m.match_type = 'internal')
+                       THEN 'duplicate' ELSE 'in_review' END,
+         status_reason = (SELECT 'Duplicate of lead #' || m.matched_lead_id FROM dedupe_matches m
+                          WHERE m.lead_id = l.id AND m.match_type = 'internal' ORDER BY m.id LIMIT 1)
+       WHERE l.status IN ('in_vici', 'in_close')
+         AND NOT EXISTS (SELECT 1 FROM dedupe_matches m WHERE m.lead_id = l.id AND m.match_type IN ('vici', 'close'))`,
+    );
+    await recheckKnown(tx, user);
+
+    await logAudit(tx, user, "delete.known_list_deleted", `known_list:${listId}`, info);
     return info;
   });
 }

@@ -1,16 +1,23 @@
 import { logAudit } from "./audit.js";
 import type { Config } from "./config.js";
 import { many, one, type Db } from "./db/db.js";
-import { describeDncListDelete, describeRunDelete, executeDncListDelete, executeRunDelete } from "./deletes.js";
+import {
+  describeDncListDelete,
+  describeKnownListDelete,
+  describeRunDelete,
+  executeDncListDelete,
+  executeKnownListDelete,
+  executeRunDelete,
+} from "./deletes.js";
 import { batchSnapshot, checkBatch, getBatch } from "./exports.js";
 import { assertApproved, GateError, snapshotHash, type ActionType } from "./gate.js";
 
 export class ApprovalError extends Error {}
 
-export type SubjectType = "export_batch" | "run" | "dnc_list";
+export type SubjectType = "export_batch" | "run" | "dnc_list" | "known_list";
 type User = { id: number; email: string; role: string; active?: boolean };
 
-const ACTION_FOR: Record<SubjectType, ActionType> = { export_batch: "import", run: "delete", dnc_list: "delete" };
+const ACTION_FOR: Record<SubjectType, ActionType> = { export_batch: "import", run: "delete", dnc_list: "delete", known_list: "delete" };
 
 // What a request covers, as shown to the approver, and the hash that pins it.
 async function describeSubject(
@@ -36,6 +43,10 @@ async function describeSubject(
   }
   if (subjectType === "run") {
     const info = await describeRunDelete(db, subjectId);
+    return { hash: snapshotHash(info), estimate: info };
+  }
+  if (subjectType === "known_list") {
+    const info = await describeKnownListDelete(db, subjectId);
     return { hash: snapshotHash(info), estimate: info };
   }
   const info = await describeDncListDelete(db, subjectId);
@@ -209,6 +220,14 @@ export async function decideApproval(
       const info = await executeRunDelete(tx, approval.subject_id, input.user);
       await tx.query("UPDATE approvals SET status = 'used' WHERE id = $1", [approval.id]);
       return { outcome: "approved" as const, message: `Import deleted: ${info.leads} lead(s) and ${info.rawRecords} raw row(s) removed.` };
+    }
+    if (approval.subject_type === "known_list") {
+      const info = await executeKnownListDelete(tx, approval.subject_id, input.user);
+      await tx.query("UPDATE approvals SET status = 'used' WHERE id = $1", [approval.id]);
+      return {
+        outcome: "approved" as const,
+        message: `${info.system} file "${info.name}" deleted: ${info.numbers} number(s) removed, ${info.leadsReleased} lead(s) no longer marked.`,
+      };
     }
     const info = await executeDncListDelete(tx, approval.subject_id, input.user);
     await tx.query("UPDATE approvals SET status = 'used' WHERE id = $1", [approval.id]);

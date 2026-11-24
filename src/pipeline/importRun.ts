@@ -2,6 +2,7 @@ import { logAudit, type Actor } from "../audit.js";
 import { many, one, type Db } from "../db/db.js";
 import { loadSettings, type DedupeKey, type Settings } from "../settings.js";
 import { parseCsv } from "./csv.js";
+import { getKnownState, KNOWN_STATUS, knownReason, phonesKnown, type KnownHit } from "./known.js";
 import { cleanMapping, guessMapping, type ColumnMapping } from "./mapping.js";
 import { cleanText, nameCityKey, normalizeDomain, normalizeEmail, normalizePhone } from "./normalize.js";
 
@@ -13,8 +14,14 @@ export type RunSummary = {
   duplicate: number;
   blocked_dnc: number;
   invalid: number;
+  // Missing on imports made before the VICIdial / Close files existed.
+  in_vici?: number;
+  in_close?: number;
   // False when no DNC list was loaded at import time: nothing was scrubbed, which is not "clear".
   dncChecked: boolean;
+  // Whether a VICIdial / Close file was loaded at import time. Not loaded means not compared.
+  viciChecked?: boolean;
+  closeChecked?: boolean;
   dedupeKeys: DedupeKey[];
   requiredFields: string[];
 };
@@ -96,9 +103,10 @@ type Candidate = {
   country: string | null;
   category: string | null;
   name_key: string | null;
-  status: "in_review" | "duplicate" | "blocked_dnc" | "invalid";
+  status: "in_review" | "duplicate" | "blocked_dnc" | "invalid" | "in_vici" | "in_close";
   status_reason: string | null;
   dncListId: number | null;
+  known: KnownHit | null;
   // An earlier lead this one repeats: one already in the database, or an earlier row of this file.
   duplicateOf: { rule: DedupeKey; existingId?: number; rawId?: number } | null;
 };
@@ -146,6 +154,7 @@ function buildCandidate(rawId: number, payload: Record<string, string>, mapping:
     status: "in_review",
     status_reason: null,
     dncListId: null,
+    known: null,
     duplicateOf: null,
   };
 }
@@ -240,6 +249,9 @@ export async function processImport(
         for (const row of rows) dncHits.set(row.phone_e164, { listId: row.list_id, listName: row.name });
       }
 
+      const knownState = await getKnownState(tx);
+      const knownHits = await phonesKnown(tx, phones as string[]);
+
       const firstInFile = new Map<string, number>();
       for (const candidate of candidates) {
         const missing = missingRequired(candidate, settings);
@@ -271,11 +283,18 @@ export async function processImport(
           }
         }
 
+        // Strongest reason wins: a DNC number, then a record that already exists outside the app,
+        // then a repeat of a lead inside it.
         const dnc = candidate.phone_e164 ? dncHits.get(candidate.phone_e164) : undefined;
+        const known = candidate.phone_e164 ? knownHits.get(candidate.phone_e164) : undefined;
         if (dnc) {
           candidate.status = "blocked_dnc";
           candidate.status_reason = `Phone is on the DNC list "${dnc.listName}"`;
           candidate.dncListId = dnc.listId;
+        } else if (known) {
+          candidate.known = known;
+          candidate.status = KNOWN_STATUS[candidate.known.kind];
+          candidate.status_reason = knownReason(candidate.known.kind, candidate.known.listName);
         } else if (candidate.duplicateOf) {
           candidate.status = "duplicate";
         }
@@ -330,6 +349,15 @@ export async function processImport(
             rule_used: "phone",
           });
         }
+        if (candidate.known) {
+          matches.push({
+            lead_id: leadId,
+            match_type: candidate.known.kind,
+            matched_ref: `known_list:${candidate.known.listId}`,
+            matched_lead_id: null,
+            rule_used: "phone",
+          });
+        }
       }
       for (const part of chunks(matches, 1000)) {
         await tx.query(
@@ -353,11 +381,15 @@ export async function processImport(
         duplicate: 0,
         blocked_dnc: 0,
         invalid: 0,
+        in_vici: 0,
+        in_close: 0,
         dncChecked,
+        viciChecked: knownState.vici.lists > 0,
+        closeChecked: knownState.close.lists > 0,
         dedupeKeys: settings.dedupeKeys,
         requiredFields: settings.requiredFields,
       };
-      for (const candidate of candidates) summary[candidate.status] += 1;
+      for (const candidate of candidates) summary[candidate.status] = (summary[candidate.status] ?? 0) + 1;
 
       await tx.query(
         `UPDATE runs SET status = 'done', finished_at = now(), summary_json = $2::jsonb,

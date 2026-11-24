@@ -3,9 +3,10 @@ import { many, one } from "../../db/db.js";
 import { getDncState } from "../../pipeline/dnc.js";
 import { decideLeads, markNotDuplicate, ReviewError, type Decision } from "../../reviews.js";
 import { can, idParam, list, need, ok, refererPath, str, type App, type Deps } from "../http.js";
-import { Chip, count, Csrf, Page, Pager, render, when } from "../views.js";
+import { Chip, count, Csrf, Page, Pager, render, statusLabel, when } from "../views.js";
 
-const STATUSES = ["in_review", "approved", "rejected", "exported", "duplicate", "blocked_dnc", "invalid"];
+const STATUSES = ["in_review", "approved", "rejected", "exported", "duplicate", "in_vici", "in_close", "blocked_dnc", "invalid"];
+const MATCH_LABEL: Record<string, string> = { dnc: "DNC list", vici: "Already in VICIdial", close: "Already in Close", internal: "Duplicate" };
 const PAGE_SIZE = 50;
 
 type LeadRow = {
@@ -108,7 +109,7 @@ export function registerLeadRoutes(app: App, { db }: Deps): void {
                 <option value="">Any status</option>
                 {STATUSES.map((value) => (
                   <option value={value} selected={value === status}>
-                    {value.replace(/_/g, " ")}
+                    {statusLabel(value)}
                   </option>
                 ))}
               </select>
@@ -238,7 +239,8 @@ export function registerLeadRoutes(app: App, { db }: Deps): void {
       db,
       `SELECT m.match_type, m.matched_ref, m.matched_lead_id, m.rule_used, m.checked_at,
               o.business_name AS other_name, o.status AS other_status,
-              (SELECT d.name FROM dnc_lists d WHERE 'dnc_list:' || d.id = m.matched_ref) AS list_name
+              coalesce((SELECT d.name FROM dnc_lists d WHERE 'dnc_list:' || d.id = m.matched_ref),
+                       (SELECT k.name FROM known_lists k WHERE 'known_list:' || k.id = m.matched_ref)) AS list_name
        FROM dedupe_matches m LEFT JOIN leads o ON o.id = m.matched_lead_id WHERE m.lead_id = $1 ORDER BY m.id`,
       [leadId],
     );
@@ -371,10 +373,10 @@ export function registerLeadRoutes(app: App, { db }: Deps): void {
               <tbody>
                 {matches.map((match) => (
                   <tr>
-                    <td>{match.match_type === "dnc" ? "DNC list" : "Duplicate"}</td>
+                    <td>{MATCH_LABEL[match.match_type] ?? match.match_type}</td>
                     <td>{match.rule_used.replace("name_city", "name and city").replace("domain", "website")}</td>
                     <td>
-                      {match.match_type === "dnc" ? (
+                      {match.match_type !== "internal" ? (
                         (match.list_name ?? "a list that has since been deleted")
                       ) : match.matched_lead_id ? (
                         <>

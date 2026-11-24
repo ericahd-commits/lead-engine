@@ -3,6 +3,7 @@ import { requestApproval } from "../../approvals.js";
 import { many, one } from "../../db/db.js";
 import { describeRunDelete } from "../../deletes.js";
 import { createImport, getSuggestedMapping, ImportError, processImport, type RunSummary } from "../../pipeline/importRun.js";
+import { getKnownState } from "../../pipeline/known.js";
 import { FIELD_LABELS, LEAD_FIELDS } from "../../pipeline/mapping.js";
 import { loadSettings } from "../../settings.js";
 import { can, file, idParam, need, ok, readUpload, str, type App, type Ctx, type Deps } from "../http.js";
@@ -223,6 +224,10 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
     }
 
     const summary = run.summary_json;
+    // A file uploaded after this import re-checked its leads, so "not compared" only holds while none is loaded.
+    const known = await getKnownState(db);
+    const viciCompared = Boolean(summary?.viciChecked) || known.vici.lists > 0;
+    const closeCompared = Boolean(summary?.closeChecked) || known.close.lists > 0;
     return render(
       c,
       <Page c={c} title={title} active="imports" sub={sub}>
@@ -237,17 +242,29 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
                 Upload one on the <a href="/dnc">DNC page</a> and every lead that can still be exported is checked.
               </div>
             ) : null}
+            {!viciCompared || !closeCompared ? (
+              <div class="note warn">
+                <b>
+                  These leads were not compared with{" "}
+                  {[!viciCompared ? "VICIdial" : "", !closeCompared ? "Close" : ""].filter(Boolean).join(" or ")}
+                </b>
+                , because no export from there has been loaded. Upload one on the{" "}
+                <a href="/existing">Existing records page</a> and the leads are compared.
+              </div>
+            ) : null}
             <div class="grid" style="margin-bottom:18px">
               {(
                 [
                   ["in_review", "Sent to review"],
                   ["duplicate", "Duplicates"],
+                  ["in_vici", viciCompared ? "Already in VICIdial" : "Already in VICIdial (not compared)"],
+                  ["in_close", closeCompared ? "Already in Close" : "Already in Close (not compared)"],
                   ["blocked_dnc", summary.dncChecked ? "Blocked by DNC" : "Blocked by DNC (not checked)"],
                   ["invalid", "Invalid rows"],
                 ] as const
               ).map(([status, label]) => (
                 <a class="stat" href={`/leads?run=${run.id}&status=${status}`} style="color:inherit">
-                  <b>{count(summary[status])}</b>
+                  <b>{count(summary[status] ?? 0)}</b>
                   <span>{label}</span>
                 </a>
               ))}
@@ -273,7 +290,14 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
     return ok(
       c,
       `/imports/${runId}`,
-      `Imported ${count(summary.total)} rows: ${count(summary.in_review)} to review, ${count(summary.duplicate)} duplicate, ${count(summary.blocked_dnc)} blocked by DNC, ${count(summary.invalid)} invalid.`,
+      `Imported ${count(summary.total)} rows: ${[
+        `${count(summary.in_review)} to review`,
+        `${count(summary.duplicate)} duplicate`,
+        ...(summary.in_vici ? [`${count(summary.in_vici)} already in VICIdial`] : []),
+        ...(summary.in_close ? [`${count(summary.in_close)} already in Close`] : []),
+        `${count(summary.blocked_dnc)} blocked by DNC`,
+        `${count(summary.invalid)} invalid`,
+      ].join(", ")}.`,
     );
   });
 

@@ -2,9 +2,9 @@
 
 A web app that takes scraped business leads from a CSV file to an approved export, without any bot in the loop:
 
-**upload CSV → match columns → normalize → dedupe → DNC check → human review → export batch → admin approval → CSV download**
+**upload CSV → match columns → normalize → dedupe → already in VICIdial / Close? → DNC check → human review → export batch → admin approval → CSV download**
 
-This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It connects to no outside system: no Close, no VICIdial, no Octoparse API, no Apify, no email finders. Exports are CSV files that a person loads into Close or VICIdial by hand.
+This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It connects to no outside system: no Close, no VICIdial, no Octoparse API, no Apify, no email finders. What is already in VICIdial and Close is known only from export files uploaded to the app. Exports are CSV files that a person loads into Close or VICIdial by hand.
 
 ## What it does
 
@@ -14,10 +14,11 @@ This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It connects t
 | Normalize | Phone to E.164, website to its host, trimmed names and addresses. |
 | Validate | A row missing a required field is kept, marked `invalid`, and shows why. |
 | Dedupe | Against earlier rows of the same file and every lead already in the database. A duplicate links to the lead it repeats. A reviewer can overrule it with a reason. |
+| Existing records | Upload a file exported from VICIdial or Close. A lead whose phone number is in one is marked `in_vici` or `in_close` and held back, at import and again whenever a new file is uploaded. It is a snapshot as of the export, matched on phone only. When no file is loaded the screens say the leads were not compared. |
 | DNC | Numbers on an uploaded do-not-call list are `blocked_dnc`. Uploading a list re-checks every lead that can still be exported. Export checks again, live. |
 | Review | Approve, reject (reason required) or mark "needs info", one lead or many. Every decision is stored. |
 | Export | Approved leads go into a batch. The batch needs an admin's approval before its CSV can be downloaded. The first download marks the leads `exported`. |
-| Delete | Deleting an import or a DNC list is a request that an admin must approve. |
+| Delete | Deleting an import, a DNC list or a VICIdial / Close file is a request that an admin must approve. |
 
 ## The approval rule
 
@@ -55,7 +56,7 @@ npm run dev
 With no `DATABASE_URL`, the app uses a file database in `./.data` (PGlite, Postgres compiled to run in-process). That is for local work only; production refuses to start without `DATABASE_URL`.
 
 ```
-npm test         # 31 tests, in-memory database, no network
+npm test         # 39 tests, in-memory database, no network
 npm run build    # type check
 ```
 
@@ -83,10 +84,10 @@ One service plus the Postgres plugin. No Redis, no worker, no cron yet: imports 
 ```
 src/config.ts            environment variables
 src/db/                  database access, migrations (SQL files)
-src/pipeline/            csv, column mapping, normalize, import + dedupe, DNC
+src/pipeline/            csv, column mapping, normalize, import + dedupe, DNC, VICIdial / Close files
 src/reviews.ts           approve / reject / needs info / not a duplicate
 src/exports.ts           batches, live eligibility check, CSV output
-src/deletes.ts           deleting an import or a DNC list
+src/deletes.ts           deleting an import, a DNC list or a VICIdial / Close file
 src/gate.ts              the approval check every gated action makes
 src/approvals.ts         requesting and deciding approvals
 src/auth.ts              accounts, passwords, sessions
@@ -96,6 +97,6 @@ tests/                   pipeline, gates, and a full run through the pages
 
 ## Not built yet
 
-Phases 2–6 of the briefing: read-only Close and VICIdial cross-reference, enrichment with spend gates, scoring, direct export to Close / VICIdial, automated scraping. Each of those needs answers from the briefing's open questions first, and anything that writes to Close or VICIdial or spends money needs sign-off before it is built.
+Phases 2–6 of the briefing: a live read-only Close and VICIdial cross-reference (today it works from uploaded export files), enrichment with spend gates, scoring, direct export to Close / VICIdial, automated scraping. Each of those needs answers from the briefing's open questions first, and anything that writes to Close or VICIdial or spends money needs sign-off before it is built.
 
 Also not handled: Excel (.xlsx) uploads (save as CSV first), email notifications, password reset by email.

@@ -6,6 +6,7 @@ const WHAT: Record<string, string> = {
   export_batch: "Export a batch of leads",
   run: "Delete an import and its leads",
   dnc_list: "Delete a do-not-call list",
+  known_list: "Delete a VICIdial / Close file",
 };
 
 function subjectLink(item: ApprovalListItem): string | null {

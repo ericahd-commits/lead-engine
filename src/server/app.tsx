@@ -6,12 +6,14 @@ import { secureHeaders } from "hono/secure-headers";
 import { getSession, login, logout, SESSION_COOKIE } from "../auth.js";
 import { many, one } from "../db/db.js";
 import { getDncState } from "../pipeline/dnc.js";
+import { getKnownState } from "../pipeline/known.js";
 import { clientIp, isUserError, refererPath, str, withMessage, type Ctx, type Deps, type Env, type FormData } from "./http.js";
 import { registerAdminRoutes } from "./routes/admin.js";
 import { registerApprovalRoutes } from "./routes/approvals.js";
 import { registerDncRoutes } from "./routes/dnc.js";
 import { registerExportRoutes } from "./routes/exports.js";
 import { registerImportRoutes } from "./routes/imports.js";
+import { registerKnownRoutes } from "./routes/known.js";
 import { registerLeadRoutes } from "./routes/leads.js";
 import { Chip, count, Flash, Page, render, Shell, when } from "./views.js";
 
@@ -124,6 +126,8 @@ export function createApp(deps: Deps): Hono<Env> {
     const by = new Map(statuses.map((row) => [row.status, row.count]));
     const total = statuses.reduce((sum, row) => sum + row.count, 0);
     const dnc = await getDncState(db);
+    const known = await getKnownState(db);
+    const notCompared = [known.vici.lists === 0 ? "VICIdial" : "", known.close.lists === 0 ? "Close" : ""].filter(Boolean);
     const pending = await one<{ count: number }>(db, "SELECT count(*)::int AS count FROM approvals WHERE status = 'pending'");
     const unmapped = await one<{ count: number }>(db, "SELECT count(*)::int AS count FROM runs WHERE status = 'needs_mapping'");
     const unchecked = await one<{ count: number }>(
@@ -142,6 +146,8 @@ export function createApp(deps: Deps): Hono<Env> {
       ["exported", "Exported", "/leads?status=exported"],
       ["rejected", "Rejected", "/leads?status=rejected"],
       ["duplicate", "Duplicates", "/leads?status=duplicate"],
+      ["in_vici", known.vici.lists === 0 ? "Already in VICIdial (not compared)" : "Already in VICIdial", "/leads?status=in_vici"],
+      ["in_close", known.close.lists === 0 ? "Already in Close (not compared)" : "Already in Close", "/leads?status=in_close"],
       ["blocked_dnc", "Blocked by DNC", "/leads?status=blocked_dnc"],
       ["invalid", "Invalid rows", "/leads?status=invalid"],
     ];
@@ -154,6 +160,12 @@ export function createApp(deps: Deps): Hono<Env> {
             <b>No DNC list is loaded.</b> Nothing in the app has been checked against a do-not-call list
             {(unchecked?.count ?? 0) > 0 ? `, including ${count(unchecked!.count)} lead(s) in review or approved` : ""}.{" "}
             <a href="/dnc">Upload one</a> before exporting anything for dialing.
+          </div>
+        ) : null}
+        {notCompared.length > 0 ? (
+          <div class="note warn">
+            <b>No export from {notCompared.join(" or ")} is loaded</b>, so leads are not compared with what is already
+            there. <a href="/existing">Upload one</a>
           </div>
         ) : null}
         {(pending?.count ?? 0) > 0 ? (
@@ -215,7 +227,7 @@ export function createApp(deps: Deps): Hono<Env> {
         </div>
         <p class="muted small">
           External writes are {config.externalWritesEnabled ? "ON" : "OFF"}. This build does not connect to Close, VICIdial or
-          any paid service; exports are CSV files only.
+          any paid service: it knows their records only from uploaded files, and exports are CSV files only.
         </p>
       </Page>,
     );
@@ -224,6 +236,7 @@ export function createApp(deps: Deps): Hono<Env> {
   registerImportRoutes(app, deps);
   registerLeadRoutes(app, deps);
   registerDncRoutes(app, deps);
+  registerKnownRoutes(app, deps);
   registerExportRoutes(app, deps);
   registerApprovalRoutes(app, deps);
   registerAdminRoutes(app, deps);

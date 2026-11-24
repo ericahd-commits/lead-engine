@@ -10,6 +10,7 @@ import { GateError } from "../gate.js";
 import { CsvError } from "../pipeline/csv.js";
 import { DncError } from "../pipeline/dnc.js";
 import { ImportError } from "../pipeline/importRun.js";
+import { KnownError } from "../pipeline/known.js";
 import { ReviewError } from "../reviews.js";
 
 export type FormData = Record<string, string | File | (string | File)[]>;
@@ -87,7 +88,7 @@ export function ok(c: Ctx, path: string, message: string): Response {
 // Mistakes a person can fix (a bad file, a missing reason, an action that is not allowed yet).
 // They go back to the page they came from with the message; anything else is a real error.
 export function isUserError(error: unknown): boolean {
-  return [ApprovalError, AuthError, DeleteError, ExportError, GateError, CsvError, DncError, ImportError, ReviewError].some(
+  return [ApprovalError, AuthError, DeleteError, ExportError, GateError, CsvError, DncError, ImportError, KnownError, ReviewError].some(
     (type) => error instanceof type,
   );
 }
