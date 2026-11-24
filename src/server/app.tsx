@@ -19,7 +19,10 @@ export function createApp(deps: Deps): Hono<Env> {
   const { db, config } = deps;
   const app = new Hono<Env>();
 
-  app.use(secureHeaders());
+  // "same-origin", not the stricter default "no-referrer": with no-referrer a browser posts forms
+  // with "Origin: null" and no Referer, so the app's own forms would fail the cross-site check
+  // below and errors could not return to the page they came from.
+  app.use(secureHeaders({ referrerPolicy: "same-origin" }));
   app.get("/health", (c) => c.json({ ok: true }));
 
   app.use(

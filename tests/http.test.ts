@@ -74,6 +74,11 @@ describe("signing in", () => {
     }
     expect((await browser.post("/leads/decide", { lead: "1", decision: "approve" })).location).toBe("/login");
     expect((await browser.get("/health")).text).toBe('{"ok":true}');
+
+    // A stricter policy makes real browsers post the sign-in form with "Origin: null".
+    const page = await app.request(`http://${HOST}/login`, { headers: { host: HOST } });
+    expect(page.headers.get("referrer-policy")).toBe("same-origin");
+    expect((await browser.post("/login", { email: "x@example.test", password: "x" }, { origin: "null" })).status).toBe(403);
     await db.close();
   });
 
