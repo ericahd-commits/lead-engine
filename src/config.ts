@@ -23,6 +23,8 @@ const envSchema = z.object({
   APPROVALS_REQUIRE_SECOND_PERSON: flag(false),
   MAX_UPLOAD_MB: z.coerce.number().positive().default(25),
   MAX_IMPORT_ROWS: z.coerce.number().int().positive().default(100_000),
+  // Read-only access to Octoparse: list tasks and read the rows they collected.
+  OCTOPARSE_API_KEY: z.string().optional(),
 });
 
 export type Config = {
@@ -36,6 +38,7 @@ export type Config = {
   requireSecondApprover: boolean;
   maxUploadBytes: number;
   maxImportRows: number;
+  octoparseApiKey: string | null;
 };
 
 export function loadConfig(env: Record<string, string | undefined> = process.env): Config {
@@ -58,6 +61,7 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     requireSecondApprover: parsed.APPROVALS_REQUIRE_SECOND_PERSON,
     maxUploadBytes: Math.floor(parsed.MAX_UPLOAD_MB * 1024 * 1024),
     maxImportRows: parsed.MAX_IMPORT_ROWS,
+    octoparseApiKey: parsed.OCTOPARSE_API_KEY?.trim() || null,
   };
 }
 
@@ -73,6 +77,7 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     requireSecondApprover: false,
     maxUploadBytes: 25 * 1024 * 1024,
     maxImportRows: 100_000,
+    octoparseApiKey: null,
     ...overrides,
   };
 }

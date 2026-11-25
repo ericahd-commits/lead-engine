@@ -17,6 +17,7 @@ import { registerDncRoutes } from "./routes/dnc.js";
 import { registerExportRoutes } from "./routes/exports.js";
 import { registerImportRoutes } from "./routes/imports.js";
 import { registerKnownRoutes } from "./routes/known.js";
+import { registerOctoparseRoutes } from "./routes/octoparse.js";
 import { HELD, NEEDS_INFO, registerLeadRoutes } from "./routes/leads.js";
 import { Brand, Chip, count, day, Flash, Page, render, Shell, when } from "./views.js";
 
@@ -344,6 +345,8 @@ export function createApp(deps: Deps): Hono<Env> {
     );
   });
 
+  // Before the import routes, so /imports/octoparse is not read as an import number.
+  registerOctoparseRoutes(app, deps);
   registerImportRoutes(app, deps);
   registerLeadRoutes(app, deps);
   registerCheckRoutes(app, deps);

@@ -1,5 +1,7 @@
 import type { Context, Hono } from "hono";
 import { HTTPException } from "hono/http-exception";
+import type { FetchLike } from "../adapters/octoparse.js";
+import { OctoparseError } from "../adapters/octoparse.js";
 import { ApprovalError } from "../approvals.js";
 import { AuthError, type Role, type Session } from "../auth.js";
 import type { Config } from "../config.js";
@@ -19,7 +21,8 @@ export type NavState = { pending: number; unmapped: number; inReview: number; ex
 export type Env = { Variables: { session: Session; form: FormData; nav: NavState } };
 export type App = Hono<Env>;
 export type Ctx = Context<Env>;
-export type Deps = { db: Db; config: Config };
+// fetchImpl is only passed by tests, so no test ever reaches a real outside service.
+export type Deps = { db: Db; config: Config; fetchImpl?: FetchLike };
 
 const RANK: Record<Role, number> = { viewer: 0, reviewer: 1, admin: 2 };
 
@@ -90,7 +93,7 @@ export function ok(c: Ctx, path: string, message: string): Response {
 // Mistakes a person can fix (a bad file, a missing reason, an action that is not allowed yet).
 // They go back to the page they came from with the message; anything else is a real error.
 export function isUserError(error: unknown): boolean {
-  return [ApprovalError, AuthError, DeleteError, ExportError, GateError, CsvError, DncError, ImportError, KnownError, ReviewError].some(
+  return [ApprovalError, AuthError, DeleteError, ExportError, GateError, CsvError, DncError, ImportError, KnownError, OctoparseError, ReviewError].some(
     (type) => error instanceof type,
   );
 }

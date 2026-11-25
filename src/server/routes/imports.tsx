@@ -86,6 +86,19 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
             </label>
           </form>
         ) : null}
+        <div class="card" style="display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap">
+          <div style="display:grid;gap:2px">
+            <strong>Or pull straight from Octoparse</strong>
+            <span class="muted small">
+              {config.octoparseApiKey
+                ? "Pick a task and bring in the rows it has already collected. Keywords and category stay in the Octoparse task."
+                : "Not connected yet. Once the Octoparse API key is added to the server, tasks can be pulled in without a file."}
+            </span>
+          </div>
+          <a class="btn" href="/imports/octoparse">
+            {config.octoparseApiKey ? "Choose a task" : "How to connect"}
+          </a>
+        </div>
         <div class="card flush">
           <div class="card-h">
             <h2>Imports</h2>

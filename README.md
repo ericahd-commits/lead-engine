@@ -4,13 +4,14 @@ A web app that takes scraped business leads from a CSV file to an approved expor
 
 **upload CSV → match columns → normalize → dedupe → already in VICIdial / Close? → DNC check → human review → export batch → admin approval → CSV download**
 
-This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It connects to no outside system: no Close, no VICIdial, no Octoparse API, no Apify, no email finders. What is already in VICIdial and Close is known only from export files uploaded to the app. Exports are CSV files that a person loads into Close or VICIdial by hand.
+This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It writes to no outside system and spends nothing: no Close, no VICIdial, no Apify, no Google Places, no email finders. The one outside connection is optional and read-only: with `OCTOPARSE_API_KEY` set, it lists Octoparse tasks and reads the rows a task has already collected. What is already in VICIdial and Close is known only from export files uploaded to the app. Exports are CSV files that a person loads into Close or VICIdial by hand.
 
 ## What it does
 
 | Step | What happens |
 |---|---|
 | Import | Upload a CSV (for example an Octoparse Desktop export). Every row is stored untouched in `raw_records`. You match the file's columns to lead fields; the matching is remembered per source name. |
+| Pull from Octoparse | Optional. Pick a task and its collected rows come in as an import, through the same column matching as a file. Read-only (`GET` requests only): the app does not start a run, change a task or its keywords, or mark data as exported. Keywords, category and location are set inside the Octoparse task. |
 | Normalize | Phone to E.164, website to its host, trimmed names and addresses. |
 | Validate | A row missing a required field is kept, marked `invalid`, and shows why. |
 | Dedupe | Against earlier rows of the same file and every lead already in the database. A duplicate links to the lead it repeats. A reviewer can overrule it with a reason. |
@@ -56,7 +57,7 @@ npm run dev
 With no `DATABASE_URL`, the app uses a file database in `./.data` (PGlite, Postgres compiled to run in-process). That is for local work only; production refuses to start without `DATABASE_URL`.
 
 ```
-npm test         # 39 tests, in-memory database, no network
+npm test         # 45 tests, in-memory database, no network
 npm run build    # type check
 ```
 
@@ -84,6 +85,7 @@ One service plus the Postgres plugin. No Redis, no worker, no cron yet: imports 
 ```
 src/config.ts            environment variables
 src/db/                  database access, migrations (SQL files)
+src/adapters/            outside services (Octoparse, read-only)
 src/pipeline/            csv, column mapping, normalize, import + dedupe, DNC, VICIdial / Close files
 src/reviews.ts           approve / reject / needs info / not a duplicate
 src/exports.ts           batches, live eligibility check, CSV output
@@ -97,6 +99,8 @@ tests/                   pipeline, gates, and a full run through the pages
 
 ## Not built yet
 
-Phases 2–6 of the briefing: a live read-only Close and VICIdial cross-reference (today it works from uploaded export files), enrichment with spend gates, scoring, direct export to Close / VICIdial, automated scraping. Each of those needs answers from the briefing's open questions first, and anything that writes to Close or VICIdial or spends money needs sign-off before it is built.
+Phases 2–6 of the briefing: a live read-only Close and VICIdial cross-reference (today it works from uploaded export files), enrichment with spend gates (Apify), scoring, direct export to Close / VICIdial, and starting a scrape from the app (running an Octoparse task or changing its keywords needs the Professional plan and writes to Octoparse). Each of those needs answers from the briefing's open questions first, and anything that writes to Close or VICIdial or spends money needs sign-off before it is built.
+
+Google Places is not used as a lead source: Google's Places API policies say not to export or store its content (business names, addresses, phone numbers) for use outside its services, apart from place IDs. Someone who owns that decision has to confirm before it is built.
 
 Also not handled: Excel (.xlsx) uploads (save as CSV first), email notifications, password reset by email.
