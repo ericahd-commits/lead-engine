@@ -159,7 +159,10 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
               <Chip value={batch.status} />
             </dd>
             <dt>Output</dt>
-            <dd>CSV file download. Nothing is sent to Close or VICIdial by this app.</dd>
+            <dd>
+              CSV file download: the cleaned lead fields first, then every column of the imported file under its original
+              name. Nothing is sent to Close or VICIdial by this app.
+            </dd>
             <dt>Going to</dt>
             <dd>{batch.target_ref ?? <span class="muted">not stated</span>}</dd>
             <dt>Approval</dt>

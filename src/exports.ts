@@ -214,9 +214,43 @@ function safeCell(value: string | null): string {
   return /^[=+\-@\t\r]/.test(value) ? `'${value}` : value;
 }
 
-export function batchCsv(leads: BatchLead[]): string {
+// The row each lead came from, as it was in the imported file, with that file's column order.
+export type Originals = Map<number, { headers: string[]; row: Record<string, string> }>;
+
+export async function getBatchOriginals(db: Db, batchId: number): Promise<Originals> {
+  const rows = await many<{ id: number; headers: string[] | null; row: Record<string, string> }>(
+    db,
+    `SELECT l.id, r.params_json->'headers' AS headers, w.payload_json AS row
+     FROM export_batch_leads b
+     JOIN leads l ON l.id = b.lead_id
+     JOIN runs r ON r.id = l.run_id
+     JOIN raw_records w ON w.id = l.source_record_id
+     WHERE b.batch_id = $1`,
+    [batchId],
+  );
+  return new Map(rows.map((item) => [item.id, { headers: item.headers ?? Object.keys(item.row), row: item.row }]));
+}
+
+// Original values are scraped text too, so they get the same formula guard. A value made only
+// of phone characters (such as +1 714 951 0945) is left alone.
+function safeOriginal(value: string | undefined): string {
+  if (!value) return "";
+  return /^[+\-]?[\d\s().\-]+$/.test(value) ? value : safeCell(value);
+}
+
+// The app's own columns first, then every column of the imported files, under its original name.
+// A batch can hold leads from files with different columns: a lead has blanks for columns its
+// file did not have.
+export function batchCsv(leads: BatchLead[], originals: Originals = new Map()): string {
+  const extra: string[] = [];
+  for (const lead of leads) {
+    for (const header of originals.get(lead.id)?.headers ?? []) if (!extra.includes(header)) extra.push(header);
+  }
+  const extraNames = extra.map((header) => (HEADERS.includes(header) ? `original_${header}` : header));
+
   const rows = leads.map((lead) => {
     const phone = splitPhone(lead.phone_e164);
+    const original = originals.get(lead.id)?.row ?? {};
     return [
       String(lead.id),
       safeCell(lead.business_name),
@@ -233,9 +267,10 @@ export function batchCsv(leads: BatchLead[]): string {
       safeCell(lead.country),
       safeCell(lead.category),
       safeCell(lead.source_name),
+      ...extra.map((header) => safeOriginal(original[header])),
     ];
   });
-  return stringify([HEADERS, ...rows]);
+  return stringify([[...HEADERS, ...extraNames], ...rows]);
 }
 
 // Produces the export file. This is the gated action: it runs only with a human approval that
@@ -266,7 +301,7 @@ export async function downloadBatch(
     }
 
     const leads = await getBatchLeads(tx, batch.id);
-    const csv = batchCsv(leads);
+    const csv = batchCsv(leads, await getBatchOriginals(tx, batch.id));
     const firstDownload = batch.status === "approved";
 
     if (firstDownload) {

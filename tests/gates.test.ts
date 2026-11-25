@@ -51,6 +51,28 @@ describe("the export gate", () => {
     await db.close();
   });
 
+  it("carries every column of the imported file into the export, in the file's order", async () => {
+    const db = await freshDb();
+    const reviewer = await addUser(db, "Rita", "reviewer");
+    const admin = await addUser(db, "Ann", "admin");
+    const enriched =
+      "searchString,GOOGLE_TITLE,GOOGLE_TOTALSCORE,LAST_BAD_REVIEW_TEXT,city,PHONE,PHONE_UNFORMATTED\n" +
+      'x,STRIDE Fitness,3.7,"-rude; and ""shady""",Tustin,(714) 951-0945,17149510945\n';
+    const { runId } = await importCsv(db, reviewer, enriched);
+    const leads = await db.query<{ id: number }>("SELECT id FROM leads WHERE run_id = $1", [runId]);
+    await decideLeads(db, { user: reviewer, leadIds: leads.rows.map((row) => row.id), decision: "approve", reason: null });
+    const { batchId } = await createBatch(db, { user: reviewer, name: "Enriched", targetRef: null, runId: null });
+    const { approvalId } = await requestApproval(db, { user: reviewer, subjectType: "export_batch", subjectId: batchId });
+    await decideApproval(db, config, { user: admin, approvalId, approve: true });
+
+    const [header, row] = (await downloadBatch(db, config, { user: reviewer, batchId })).csv.split("\n");
+    // A file column named like one of the app's own is kept under original_<name>.
+    expect(header).toMatch(/,source,searchString,GOOGLE_TITLE,GOOGLE_TOTALSCORE,LAST_BAD_REVIEW_TEXT,original_city,PHONE,PHONE_UNFORMATTED$/);
+    expect(row).toContain("STRIDE Fitness,+17149510945,1,7149510945");
+    expect(row).toMatch(/,x,STRIDE Fitness,3\.7,"'-rude; and ""shady""",Tustin,\(714\) 951-0945,17149510945$/);
+    await db.close();
+  });
+
   it("drops the approval when the batch changes afterwards", async () => {
     const db = await freshDb();
     const reviewer = await addUser(db, "Rita", "reviewer");
