@@ -1,7 +1,7 @@
-import { requestApproval } from "../../approvals.js";
+import { ApprovalError, requestApproval } from "../../approvals.js";
 import { many, one } from "../../db/db.js";
-import { checkBatch, createBatch, downloadBatch, getBatch, getBatchLeads, removeLeadsFromBatch } from "../../exports.js";
-import { can, idParam, list, need, ok, str, type App, type Deps } from "../http.js";
+import { checkBatch, createBatch, ExportError, downloadBatch, getBatch, getBatchLeads, removeLeadsFromBatch } from "../../exports.js";
+import { can, idParam, list, need, ok, str, withMessage, type App, type Deps } from "../http.js";
 import { Chip, count, Csrf, Page, render, when } from "../views.js";
 
 export function registerExportRoutes(app: App, { db, config }: Deps): void {
@@ -19,76 +19,93 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
          SELECT 1 FROM export_batch_leads b JOIN export_batches e ON e.id = b.batch_id WHERE b.lead_id = l.id AND e.status <> 'failed')`,
     );
 
+    const stepOf = (status: string) => (status === "done" ? 3 : status === "approved" || status === "running" ? 2 : 1);
+    const stepClass = (at: number, n: number) => (n <= at ? "done" : n === at + 1 ? "now" : "");
+
     return render(
       c,
-      <Page c={c} title="Exports" active="exports" sub="Approved leads leave the app in batches. Each batch needs an admin's approval before its file can be downloaded.">
+      <Page
+        c={c}
+        title="Export"
+        active="exports"
+        step="Step 4"
+        sub="Approved leads leave the app in batches, as a CSV file. Each batch needs an admin's approval before its file can be downloaded."
+      >
         {can(session, "reviewer") ? (
-          <div class="card">
-            <h2>New batch</h2>
-            {(waiting?.count ?? 0) === 0 ? (
-              <p class="muted">No approved leads are waiting to be exported.</p>
-            ) : (
-              <form method="post" action="/exports">
-                <Csrf session={session} />
-                <p>{count(waiting!.count)} approved lead(s) are not in a batch yet. A new batch takes all of them.</p>
-                <div class="row">
-                  <div>
-                    <label for="name">Batch name</label>
-                    <input id="name" type="text" name="name" required placeholder="e.g. Gyms Ohio, week 48" />
-                  </div>
-                  <div>
-                    <label for="target">Where it is going (note for the approver)</label>
-                    <input id="target" type="text" name="target_ref" placeholder="e.g. VICIdial list 1048, or Close" />
-                  </div>
-                  <div class="fit">
-                    <button class="primary" type="submit">
-                      Create batch
-                    </button>
-                  </div>
-                </div>
-              </form>
-            )}
-          </div>
-        ) : null}
-        <div class="card">
-          <h2>Batches</h2>
-          {batches.length === 0 ? (
-            <p class="muted">No batches yet.</p>
+          (waiting?.count ?? 0) === 0 ? (
+            <div class="card muted">No approved leads are waiting to be exported.</div>
           ) : (
-            <div class="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Batch</th>
-                    <th>Going to</th>
-                    <th class="num">Leads</th>
-                    <th>Status</th>
-                    <th>Created</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {batches.map((batch) => (
-                    <tr>
-                      <td>
-                        <a href={`/exports/${batch.id}`}>
-                          #{batch.id} {batch.name}
-                        </a>
-                      </td>
-                      <td>{batch.target_ref}</td>
-                      <td class="num">{count(batch.leads)}</td>
-                      <td>
-                        <Chip value={batch.status} />
-                      </td>
-                      <td>
-                        {when(batch.created_at)} · {batch.creator}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <form method="post" action="/exports" class="card flush">
+              <Csrf session={session} />
+              <div class="pad" style="display:grid;gap:14px">
+                <div style="display:grid;gap:2px">
+                  <h2 style="margin:0">New batch</h2>
+                  <span class="muted small">
+                    {count(waiting!.count)} approved lead(s) are not in a batch yet. A new batch takes all of them.
+                  </span>
+                </div>
+                <div class="row">
+                  <label>
+                    Batch name
+                    <input id="name" type="text" name="name" required placeholder="e.g. Gyms Ohio, week 48" />
+                  </label>
+                  <label>
+                    Where it is going (note for the approver)
+                    <input id="target" type="text" name="target_ref" placeholder="e.g. VICIdial list 1048, or Close" />
+                  </label>
+                </div>
+              </div>
+              <div class="card-f">
+                <span class="fill muted small">Nothing is sent to VICIdial or Close by this app. The file is downloaded by a person after approval.</span>
+                <button class="primary lift" type="submit">
+                  Create and request approval
+                </button>
+              </div>
+            </form>
+          )
+        ) : null}
+        {batches.length === 0 ? <div class="card muted">No batches yet.</div> : null}
+        {batches.map((batch) => {
+          const at = stepOf(batch.status);
+          return (
+            <div class="card" style="display:grid;gap:14px">
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                <div style="display:grid;gap:2px;min-width:0">
+                  <a href={`/exports/${batch.id}`} style="font-weight:700;font-size:16px;color:var(--ink);overflow-wrap:anywhere">
+                    #{batch.id} {batch.name}
+                  </a>
+                  <span class="muted small">
+                    {count(batch.leads)} lead(s) · {batch.target_ref ? `going to ${batch.target_ref}` : "destination not stated"} · created{" "}
+                    {when(batch.created_at)} by {batch.creator}
+                  </span>
+                </div>
+                <Chip value={batch.status} />
+              </div>
+              <div style="display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap">
+                <div class="steps">
+                  <span class={stepClass(at, 1)}>{batch.status === "draft" ? "Created, approval not requested" : "Created"}</span>
+                  <i></i>
+                  <span class={stepClass(at, 2)}>Approved</span>
+                  <i></i>
+                  <span class={stepClass(at, 3)}>Downloaded</span>
+                </div>
+                <div style="display:flex;gap:8px;align-items:center">
+                  <a class="btn sm" href={`/exports/${batch.id}`}>
+                    Open
+                  </a>
+                  {can(session, "reviewer") && (batch.status === "approved" || batch.status === "done") ? (
+                    <form method="post" action={`/exports/${batch.id}/download`} class="inline">
+                      <Csrf session={session} />
+                      <button class="primary sm" type="submit">
+                        {batch.status === "done" ? "Download again" : "Download CSV"}
+                      </button>
+                    </form>
+                  ) : null}
+                </div>
+              </div>
             </div>
-          )}
-        </div>
+          );
+        })}
       </Page>,
     );
   });
@@ -102,7 +119,17 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
       targetRef: str(form, "target_ref") || null,
       runId: null,
     });
-    return ok(c, `/exports/${batchId}`, `Batch created with ${count(leadCount)} lead(s). Check it, then ask for approval.`);
+    try {
+      await requestApproval(db, { user: session.user, subjectType: "export_batch", subjectId: batchId, note: "" });
+    } catch (error) {
+      if (!(error instanceof ApprovalError) && !(error instanceof ExportError)) throw error;
+      // The batch exists; say plainly that approval was not requested and why.
+      return c.redirect(
+        withMessage(`/exports/${batchId}`, "err", `Batch created with ${count(leadCount)} lead(s), but approval was not requested: ${error.message}`),
+        303,
+      );
+    }
+    return ok(c, "/exports", `Batch created with ${count(leadCount)} lead(s) and approval requested. An admin has to approve before the file can be downloaded.`);
   });
 
   app.get("/exports/:id", async (c) => {
@@ -124,7 +151,7 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
 
     return render(
       c,
-      <Page c={c} title={`Batch #${batch.id}: ${batch.name}`} active="exports" sub={`${count(leads.length)} lead(s) · created ${when(batch.created_at)}`}>
+      <Page c={c} title={`Batch #${batch.id}: ${batch.name}`} active="exports" step="Step 4" crumb={`Export / #${batch.id}`} sub={`${count(leads.length)} lead(s) · created ${when(batch.created_at)}`}>
         <div class="card">
           <dl class="kv">
             <dt>Status</dt>
@@ -157,7 +184,7 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
         {check.dncNeverLoaded && batch.status !== "done" ? (
           <div class="note warn">
             <b>This batch has not been scrubbed against any do-not-call list</b>
-            {neverChecked > 0 ? ` (${count(neverChecked)} lead(s) with a phone number)` : ""}. <a href="/dnc">Upload a DNC list</a>{" "}
+            {neverChecked > 0 ? ` (${count(neverChecked)} lead(s) with a phone number)` : ""}. <a href="/checks">Upload a DNC list</a>{" "}
             first unless that scrub is being done somewhere else.
           </div>
         ) : null}

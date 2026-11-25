@@ -14,7 +14,9 @@ import { KnownError } from "../pipeline/known.js";
 import { ReviewError } from "../reviews.js";
 
 export type FormData = Record<string, string | File | (string | File)[]>;
-export type Env = { Variables: { session: Session; form: FormData } };
+// The counts the sidebar shows on every page.
+export type NavState = { pending: number; unmapped: number; inReview: number; externalWrites: boolean };
+export type Env = { Variables: { session: Session; form: FormData; nav: NavState } };
 export type App = Hono<Env>;
 export type Ctx = Context<Env>;
 export type Deps = { db: Db; config: Config };

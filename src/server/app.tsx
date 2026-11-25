@@ -1,21 +1,26 @@
+import { readFileSync } from "node:fs";
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { deleteCookie, getCookie, setCookie } from "hono/cookie";
 import { HTTPException } from "hono/http-exception";
 import { secureHeaders } from "hono/secure-headers";
+import { listApprovals } from "../approvals.js";
 import { getSession, login, logout, SESSION_COOKIE } from "../auth.js";
 import { many, one } from "../db/db.js";
 import { getDncState } from "../pipeline/dnc.js";
 import { getKnownState } from "../pipeline/known.js";
 import { clientIp, isUserError, refererPath, str, withMessage, type Ctx, type Deps, type Env, type FormData } from "./http.js";
 import { registerAdminRoutes } from "./routes/admin.js";
-import { registerApprovalRoutes } from "./routes/approvals.js";
+import { approvalTitle, registerApprovalRoutes } from "./routes/approvals.js";
+import { registerCheckRoutes } from "./routes/checks.js";
 import { registerDncRoutes } from "./routes/dnc.js";
 import { registerExportRoutes } from "./routes/exports.js";
 import { registerImportRoutes } from "./routes/imports.js";
 import { registerKnownRoutes } from "./routes/known.js";
-import { registerLeadRoutes } from "./routes/leads.js";
-import { Chip, count, Flash, Page, render, Shell, when } from "./views.js";
+import { HELD, NEEDS_INFO, registerLeadRoutes } from "./routes/leads.js";
+import { Brand, Chip, count, day, Flash, Page, render, Shell, when } from "./views.js";
+
+const LOGO = new Uint8Array(readFileSync(new URL("./assets/logo.png", import.meta.url)));
 
 export function createApp(deps: Deps): Hono<Env> {
   const { db, config } = deps;
@@ -26,6 +31,11 @@ export function createApp(deps: Deps): Hono<Env> {
   // below and errors could not return to the page they came from.
   app.use(secureHeaders({ referrerPolicy: "same-origin" }));
   app.get("/health", (c) => c.json({ ok: true }));
+  app.get("/assets/logo.png", (c) => {
+    c.header("Content-Type", "image/png");
+    c.header("Cache-Control", "public, max-age=86400");
+    return c.body(LOGO);
+  });
 
   app.use(
     bodyLimit({
@@ -59,26 +69,29 @@ export function createApp(deps: Deps): Hono<Env> {
       c,
       <Shell title="Sign in">
         <div class="login">
+          <Brand />
           <div class="card">
-            <h1>Lead Engine</h1>
-            <p class="sub">Sign in to continue.</p>
-            <Flash c={c} />
-            {(users?.count ?? 0) === 0 ? (
-              <div class="note warn">
-                No accounts exist yet. Set ADMIN_EMAIL and ADMIN_PASSWORD (10+ characters) and restart the app to create
-                the first admin.
-              </div>
-            ) : null}
             <form method="post" action="/login">
-              <p>
-                <label for="email">Email</label>
+              <div>
+                <h2 style="margin:0">Sign in</h2>
+                <span class="muted small">Use the account an admin gave you.</span>
+              </div>
+              <Flash c={c} inline />
+              {(users?.count ?? 0) === 0 ? (
+                <div class="note warn">
+                  No accounts exist yet. Set ADMIN_EMAIL and ADMIN_PASSWORD (10+ characters) and restart the app to create
+                  the first admin.
+                </div>
+              ) : null}
+              <label>
+                Email
                 <input id="email" type="email" name="email" required autofocus autocomplete="username" />
-              </p>
-              <p>
-                <label for="password">Password</label>
+              </label>
+              <label>
+                Password
                 <input id="password" type="password" name="password" required autocomplete="current-password" />
-              </p>
-              <button class="primary" type="submit">
+              </label>
+              <button class="primary lift" type="submit">
                 Sign in
               </button>
             </form>
@@ -106,9 +119,24 @@ export function createApp(deps: Deps): Hono<Env> {
     const session = await getSession(db, getCookie(c, SESSION_COOKIE));
     if (!session) return c.redirect("/login", 303);
     c.set("session", session);
-    if (c.req.method !== "GET" && c.req.method !== "HEAD" && str(c.get("form"), "_csrf") !== session.csrfToken) {
+    const reading = c.req.method === "GET" || c.req.method === "HEAD";
+    if (!reading && str(c.get("form"), "_csrf") !== session.csrfToken) {
       throw new HTTPException(403, { message: "This form has expired. Go back, reload the page and try again." });
     }
+    const nav = reading
+      ? await one<{ pending: number; unmapped: number; in_review: number }>(
+          db,
+          `SELECT (SELECT count(*)::int FROM approvals WHERE status = 'pending') AS pending,
+                  (SELECT count(*)::int FROM runs WHERE status = 'needs_mapping') AS unmapped,
+                  (SELECT count(*)::int FROM leads WHERE status = 'in_review') AS in_review`,
+        )
+      : null;
+    c.set("nav", {
+      pending: nav?.pending ?? 0,
+      unmapped: nav?.unmapped ?? 0,
+      inReview: nav?.in_review ?? 0,
+      externalWrites: config.externalWritesEnabled,
+    });
     await next();
   });
 
@@ -123,118 +151,202 @@ export function createApp(deps: Deps): Hono<Env> {
       db,
       "SELECT status, count(*)::int AS count FROM leads GROUP BY status",
     );
-    const by = new Map(statuses.map((row) => [row.status, row.count]));
+    const by = (status: string) => statuses.find((row) => row.status === status)?.count ?? 0;
     const total = statuses.reduce((sum, row) => sum + row.count, 0);
+    const held = HELD.reduce((sum, status) => sum + by(status), 0);
+    const needsInfo =
+      (await one<{ count: number }>(db, `SELECT count(*)::int AS count FROM leads l WHERE l.status = 'in_review' AND ${NEEDS_INFO}`))?.count ?? 0;
     const dnc = await getDncState(db);
     const known = await getKnownState(db);
     const notCompared = [known.vici.lists === 0 ? "VICIdial" : "", known.close.lists === 0 ? "Close" : ""].filter(Boolean);
-    const pending = await one<{ count: number }>(db, "SELECT count(*)::int AS count FROM approvals WHERE status = 'pending'");
-    const unmapped = await one<{ count: number }>(db, "SELECT count(*)::int AS count FROM runs WHERE status = 'needs_mapping'");
-    const unchecked = await one<{ count: number }>(
+    const pending = (await listApprovals(db, 200)).filter((item) => item.status === "pending");
+    const unmapped = await many<{ id: number; file_name: string | null; row_count: number }>(
       db,
-      `SELECT count(*)::int AS count FROM leads
-       WHERE dnc_checked_at IS NULL AND phone_e164 IS NOT NULL AND status IN ('in_review', 'approved')`,
+      "SELECT id, file_name, row_count FROM runs WHERE status = 'needs_mapping' ORDER BY id DESC LIMIT 5",
     );
+    const unchecked =
+      (
+        await one<{ count: number }>(
+          db,
+          `SELECT count(*)::int AS count FROM leads
+           WHERE dnc_checked_at IS NULL AND phone_e164 IS NOT NULL AND status IN ('in_review', 'approved')`,
+        )
+      )?.count ?? 0;
+    const files = await one<{ count: number; latest: Date | null }>(db, "SELECT count(*)::int AS count, max(created_at) AS latest FROM runs");
     const runs = await many<{ id: number; source: string; file_name: string | null; status: string; row_count: number; created_at: Date }>(
       db,
       `SELECT r.id, s.name AS source, r.file_name, r.status, r.row_count, r.created_at
-       FROM runs r JOIN sources s ON s.id = r.source_id ORDER BY r.id DESC LIMIT 8`,
+       FROM runs r JOIN sources s ON s.id = r.source_id ORDER BY r.id DESC LIMIT 5`,
     );
-    const tiles: [string, string, string][] = [
-      ["in_review", "Waiting for review", "/leads?status=in_review"],
-      ["approved", "Approved, not exported", "/leads?status=approved"],
-      ["exported", "Exported", "/leads?status=exported"],
-      ["rejected", "Rejected", "/leads?status=rejected"],
-      ["duplicate", "Duplicates", "/leads?status=duplicate"],
-      ["in_vici", known.vici.lists === 0 ? "Already in VICIdial (not compared)" : "Already in VICIdial", "/leads?status=in_vici"],
-      ["in_close", known.close.lists === 0 ? "Already in Close (not compared)" : "Already in Close", "/leads?status=in_close"],
-      ["blocked_dnc", "Blocked by DNC", "/leads?status=blocked_dnc"],
-      ["invalid", "Invalid rows", "/leads?status=invalid"],
+    const empty = total === 0 && (files?.count ?? 0) === 0;
+
+    const needs: { tone: string; title: string; body: string; action: string; href: string }[] = [];
+    if (dnc.listCount === 0) {
+      needs.push({
+        tone: "warn",
+        title: "No DNC list is loaded",
+        body: `Nothing in the app has been checked against a do-not-call list${unchecked > 0 ? `, including ${count(unchecked)} lead(s) in review or approved` : ""}. Load one before exporting anything for dialing.`,
+        action: "Load a list",
+        href: "/checks",
+      });
+    }
+    if (pending.length > 0) {
+      needs.push({
+        tone: "warn",
+        title: `${count(pending.length)} request(s) waiting for a decision`,
+        body: pending.slice(0, 4).map(approvalTitle).join(" · ") + (pending.length > 4 ? ` · and ${count(pending.length - 4)} more` : ""),
+        action: "Open approvals",
+        href: "/approvals",
+      });
+    }
+    for (const run of unmapped) {
+      needs.push({
+        tone: "primary",
+        title: `Import #${run.id} needs its columns matched`,
+        body: `${run.file_name ?? "file"} · ${count(run.row_count)} rows. No leads are created until this is done.`,
+        action: "Match columns",
+        href: `/imports/${run.id}`,
+      });
+    }
+    if (by("in_review") > 0) {
+      needs.push({
+        tone: "primary",
+        title: `${count(by("in_review"))} lead(s) waiting for review`,
+        body: needsInfo > 0 ? `${count(needsInfo)} of them are marked as needing info.` : "They passed the automatic checks and need a person to decide.",
+        action: "Start reviewing",
+        href: "/leads",
+      });
+    }
+    if (notCompared.length > 0) {
+      needs.push({
+        tone: "",
+        title: `Leads are not compared with ${notCompared.join(" or ")}`,
+        body: `No export from ${notCompared.join(" or ")} is loaded, so leads already there are not held back.`,
+        action: "Upload export",
+        href: "/checks",
+      });
+    }
+
+    const stages: { step: string; n: number; label: string; sub: string; href: string }[] = [
+      { step: "Imported", n: total, label: "All leads", sub: `From ${count(files?.count ?? 0)} file(s)`, href: "/leads?tab=all" },
+      { step: "Held back", n: held, label: "Not sent to review", sub: "Duplicates, already in VICIdial or Close, DNC, invalid", href: "/leads?tab=held" },
+      { step: "Step 3", n: by("in_review"), label: "In review", sub: `${count(needsInfo)} need info · ${count(by("rejected"))} rejected so far`, href: "/leads" },
+      { step: "Step 4", n: by("approved"), label: "Approved", sub: "Not exported yet", href: "/exports" },
+      { step: "Done", n: by("exported"), label: "Exported", sub: "Downloaded as CSV", href: "/leads?status=exported" },
     ];
 
     return render(
       c,
-      <Page c={c} title="Overview" active="home" sub={`${count(total)} leads in the app.`}>
-        {dnc.listCount === 0 ? (
-          <div class="note warn">
-            <b>No DNC list is loaded.</b> Nothing in the app has been checked against a do-not-call list
-            {(unchecked?.count ?? 0) > 0 ? `, including ${count(unchecked!.count)} lead(s) in review or approved` : ""}.{" "}
-            <a href="/dnc">Upload one</a> before exporting anything for dialing.
-          </div>
-        ) : null}
-        {notCompared.length > 0 ? (
-          <div class="note warn">
-            <b>No export from {notCompared.join(" or ")} is loaded</b>, so leads are not compared with what is already
-            there. <a href="/existing">Upload one</a>
-          </div>
-        ) : null}
-        {(pending?.count ?? 0) > 0 ? (
-          <div class="note warn">
-            {count(pending!.count)} request(s) are waiting for a decision. <a href="/approvals">Open approvals</a>
-          </div>
-        ) : null}
-        {(unmapped?.count ?? 0) > 0 ? (
-          <div class="note warn">
-            {count(unmapped!.count)} uploaded file(s) still need their columns matched. <a href="/imports">Open imports</a>
-          </div>
-        ) : null}
-        <div class="grid" style="margin-bottom:18px">
-          {tiles.map(([status, label, href]) => (
-            <a class="stat" href={href} style="color:inherit">
-              <b>{count(by.get(status) ?? 0)}</b>
-              <span>{label}</span>
-            </a>
-          ))}
-        </div>
-        <div class="card">
-          <h2>Latest imports</h2>
-          {runs.length === 0 ? (
-            <p class="muted">
-              Nothing imported yet. <a href="/imports">Upload a CSV</a> to start.
-            </p>
-          ) : (
-            <div class="scroll">
-              <table>
-                <thead>
-                  <tr>
-                    <th>Import</th>
-                    <th>Source</th>
-                    <th>File</th>
-                    <th class="num">Rows</th>
-                    <th>Status</th>
-                    <th>Uploaded</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {runs.map((run) => (
-                    <tr>
-                      <td>
-                        <a href={`/imports/${run.id}`}>#{run.id}</a>
-                      </td>
-                      <td>{run.source}</td>
-                      <td>{run.file_name}</td>
-                      <td class="num">{count(run.row_count)}</td>
-                      <td>
-                        <Chip value={run.status} />
-                      </td>
-                      <td>{when(run.created_at)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+      <Page
+        c={c}
+        title="Overview"
+        active="home"
+        sub={empty ? "No leads yet." : `${count(total)} lead(s) in the app.${files?.latest ? ` Last file uploaded ${day(files.latest)}.` : ""}`}
+      >
+        {empty ? (
+          <div class="card" style="padding:32px;display:grid;gap:20px">
+            <div style="display:grid;gap:4px;max-width:560px">
+              <h2 style="margin:0;font-size:18px">Let's get your first leads in</h2>
+              <p class="muted">Three steps. Nothing leaves the app until an admin approves it.</p>
             </div>
-          )}
-        </div>
-        <p class="muted small">
-          External writes are {config.externalWritesEnabled ? "ON" : "OFF"}. This build does not connect to Close, VICIdial or
-          any paid service: it knows their records only from uploaded files, and exports are CSV files only.
-        </p>
+            <div class="onb">
+              <div>
+                <span class="eyebrow">Step 1</span>
+                <strong>Upload a scraped CSV</strong>
+                <span class="muted small">Match its columns and the rows become leads.</span>
+              </div>
+              <div>
+                <span class="eyebrow">Step 2</span>
+                <strong>Load your checks</strong>
+                <span class="muted small">A DNC list and exports from VICIdial and Close. None is loaded yet.</span>
+              </div>
+              <div>
+                <span class="eyebrow">Step 3</span>
+                <strong>Review and export</strong>
+                <span class="muted small">Approve leads, batch them, get sign-off.</span>
+              </div>
+            </div>
+            <div>
+              <a class="btn primary lift" href="/imports">
+                Upload a CSV
+              </a>
+            </div>
+          </div>
+        ) : (
+          <>
+            <div class="card flush">
+              <div class="card-h">
+                <h2>Needs you</h2>
+                <span class="muted small">{needs.length > 0 ? `${count(needs.length)} thing(s)` : "All caught up"}</span>
+              </div>
+              {needs.length === 0 ? <div class="need muted">Nothing is waiting on a person right now.</div> : null}
+              {needs.map((need) => (
+                <div class="need">
+                  <span class={`dot ${need.tone}`}></span>
+                  <div class="t">
+                    <strong>{need.title}</strong>
+                    <span class="muted small">{need.body}</span>
+                  </div>
+                  <a class="btn sm" href={need.href}>
+                    {need.action}
+                  </a>
+                </div>
+              ))}
+            </div>
+
+            <div class="stack tight">
+              <div class="card-h" style="padding:0">
+                <h2>Where your leads are</h2>
+                <span class="muted small">Click a stage to open it</span>
+              </div>
+              <div class="grid">
+                {stages.map((stage) => (
+                  <a class="stat" href={stage.href}>
+                    <span class="eyebrow soft">{stage.step}</span>
+                    <b>{count(stage.n)}</b>
+                    <strong>{stage.label}</strong>
+                    <span>{stage.sub}</span>
+                  </a>
+                ))}
+              </div>
+            </div>
+
+            <div class="card flush">
+              <div class="card-h">
+                <h2>Latest imports</h2>
+                <a class="small" href="/imports" style="font-weight:600">
+                  All imports
+                </a>
+              </div>
+              {runs.length === 0 ? <div class="empty">No files have been uploaded yet.</div> : null}
+              <div class="lines">
+                {runs.map((run) => (
+                  <div class="runline">
+                    <a href={`/imports/${run.id}`}>#{run.id}</a>
+                    <span style="display:grid;min-width:0">
+                      <span class="clip" style="font-weight:600">
+                        {run.file_name ?? "file"}
+                      </span>
+                      <span class="muted tiny clip">{run.source}</span>
+                    </span>
+                    <span class="muted">{count(run.row_count)} rows</span>
+                    <span>
+                      <Chip value={run.status} href={`/imports/${run.id}`} />
+                    </span>
+                    <span class="muted">{when(run.created_at)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </>
+        )}
       </Page>,
     );
   });
 
   registerImportRoutes(app, deps);
   registerLeadRoutes(app, deps);
+  registerCheckRoutes(app, deps);
   registerDncRoutes(app, deps);
   registerKnownRoutes(app, deps);
   registerExportRoutes(app, deps);

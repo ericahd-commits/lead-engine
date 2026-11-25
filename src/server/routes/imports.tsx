@@ -21,6 +21,15 @@ type RunRow = {
   uploader: string | null;
 };
 
+// Settings name the stored columns; the matching form names the lead fields.
+const REQUIRED_AS: Record<string, string> = { phone_e164: "phone", website_domain: "website" };
+
+const UPLOAD_SCRIPT = `(function(){
+var s=document.getElementById('source'),f=document.getElementById('file'),t=document.getElementById('drop-text');
+[].forEach.call(document.querySelectorAll('[data-source]'),function(b){b.addEventListener('click',function(){s.value=b.getAttribute('data-source');s.focus()})});
+if(f&&t){f.addEventListener('change',function(){if(f.files&&f.files[0]){t.textContent=f.files[0].name+' is ready. Press Upload.'}})}
+})();`;
+
 export function registerImportRoutes(app: App, { db, config }: Deps): void {
   app.get("/imports", async (c) => {
     const session = c.get("session");
@@ -30,86 +39,97 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
        FROM runs r JOIN sources s ON s.id = r.source_id LEFT JOIN users u ON u.id = r.created_by
        ORDER BY r.id DESC LIMIT 200`,
     );
-    const sources = await many<{ name: string }>(db, "SELECT name FROM sources ORDER BY name");
+    const sources = await many<{ name: string }>(
+      db,
+      "SELECT s.name FROM sources s ORDER BY (SELECT max(r.id) FROM runs r WHERE r.source_id = s.id) DESC NULLS LAST, s.name LIMIT 6",
+    );
+    const num = (run: RunRow, value: number | undefined) => (run.summary_json ? count(value ?? 0) : "—");
 
     return render(
       c,
-      <Page c={c} title="Imports" active="imports" sub="Upload a CSV export, match its columns, and the rows become leads.">
+      <Page c={c} title="Import" active="imports" step="Step 1" sub="Upload a CSV export, match its columns, and the rows become leads.">
         {can(session, "reviewer") ? (
-          <div class="card">
-            <h2>Upload a file</h2>
-            <form method="post" action="/imports" enctype="multipart/form-data">
-              <Csrf session={session} />
-              <div class="row">
-                <div>
-                  <label for="source">Source</label>
-                  <input id="source" type="text" name="source" list="sources" required placeholder="e.g. Octoparse: Google Maps gyms" />
-                  <datalist id="sources">
-                    {sources.map((source) => (
-                      <option value={source.name} />
-                    ))}
-                  </datalist>
+          <form method="post" action="/imports" enctype="multipart/form-data" class="card upload">
+            <Csrf session={session} />
+            <div style="display:grid;gap:12px;align-content:start">
+              <h2 style="margin:0">Upload a file</h2>
+              <label>
+                Source
+                <input id="source" type="text" name="source" required placeholder="e.g. Octoparse: Google Maps gyms" />
+              </label>
+              {sources.length > 0 ? (
+                <div style="display:flex;gap:6px;flex-wrap:wrap">
+                  {sources.map((source) => (
+                    <button type="button" class="pick" data-source={source.name}>
+                      {source.name}
+                    </button>
+                  ))}
                 </div>
-                <div>
-                  <label for="file">CSV file</label>
-                  <input id="file" type="file" name="file" accept=".csv,.txt,text/csv" required />
-                </div>
-                <div class="fit">
-                  <button class="primary" type="submit">
-                    Upload
-                  </button>
-                </div>
+              ) : null}
+              <span class="muted tiny">
+                Use the same source name for files from the same scraper and the column matching is remembered.
+              </span>
+              <div>
+                <button class="primary" type="submit">
+                  Upload
+                </button>
               </div>
-              <p class="muted small">
-                CSV only, up to {Math.round(config.maxUploadBytes / 1024 / 1024)} MB and {count(config.maxImportRows)} rows. Use
-                the same source name for files from the same scraper and the column matching is remembered.
-              </p>
-            </form>
-          </div>
+            </div>
+            <label class="drop">
+              <input id="file" type="file" name="file" accept=".csv,.txt,text/csv" required aria-label="CSV file" />
+              <span class="ic">CSV</span>
+              <strong id="drop-text">Drop a CSV here, or click to choose</strong>
+              <span class="muted tiny">
+                CSV only · up to {Math.round(config.maxUploadBytes / 1024 / 1024)} MB and {count(config.maxImportRows)} rows · save
+                .xlsx as CSV first
+              </span>
+            </label>
+          </form>
         ) : null}
-        <div class="card">
-          <h2>Imports</h2>
+        <div class="card flush">
+          <div class="card-h">
+            <h2>Imports</h2>
+          </div>
           {runs.length === 0 ? (
-            <p class="muted">No files have been uploaded yet.</p>
+            <div class="empty">No files have been uploaded yet.</div>
           ) : (
             <div class="scroll">
               <table>
                 <thead>
                   <tr>
-                    <th>Import</th>
-                    <th>Source</th>
+                    <th>#</th>
                     <th>File</th>
                     <th>Status</th>
                     <th class="num">Rows</th>
-                    <th class="num">To review</th>
-                    <th class="num">Duplicate</th>
+                    <th class="num">Review</th>
+                    <th class="num">Dupes</th>
                     <th class="num">DNC</th>
                     <th class="num">Invalid</th>
-                    <th>Uploaded</th>
                   </tr>
                 </thead>
                 <tbody>
                   {runs.map((run) => (
                     <tr>
+                      <td class="muted">{run.id}</td>
                       <td>
-                        <a href={`/imports/${run.id}`}>#{run.id}</a>
+                        <a href={`/imports/${run.id}`} style="font-weight:600;color:var(--ink)">
+                          {run.file_name ?? "file"}
+                        </a>
+                        <div class="muted tiny">
+                          {run.source} · {when(run.created_at)}
+                          {run.uploader ? ` · ${run.uploader}` : ""}
+                        </div>
                       </td>
-                      <td>{run.source}</td>
-                      <td>{run.file_name}</td>
                       <td>
-                        <Chip value={run.status} />
+                        <Chip value={run.status} href={`/imports/${run.id}`} />
                       </td>
                       <td class="num">{count(run.row_count)}</td>
-                      <td class="num">{run.summary_json ? count(run.summary_json.in_review) : ""}</td>
-                      <td class="num">{run.summary_json ? count(run.summary_json.duplicate) : ""}</td>
-                      <td class="num">
-                        {run.summary_json ? (run.summary_json.dncChecked ? count(run.summary_json.blocked_dnc) : "not checked") : ""}
+                      <td class="num">{num(run, run.summary_json?.in_review)}</td>
+                      <td class="num muted">{num(run, run.summary_json?.duplicate)}</td>
+                      <td class="num muted">
+                        {run.summary_json ? (run.summary_json.dncChecked ? count(run.summary_json.blocked_dnc) : "not checked") : "—"}
                       </td>
-                      <td class="num">{run.summary_json ? count(run.summary_json.invalid) : ""}</td>
-                      <td>
-                        {when(run.created_at)}
-                        {run.uploader ? ` · ${run.uploader}` : ""}
-                      </td>
+                      <td class="num muted">{num(run, run.summary_json?.invalid)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -117,6 +137,7 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
             </div>
           )}
         </div>
+        <script dangerouslySetInnerHTML={{ __html: UPLOAD_SCRIPT }} />
       </Page>,
     );
   });
@@ -153,6 +174,8 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
     if (run.status === "needs_mapping" || run.status === "failed") {
       const { headers, mapping } = await getSuggestedMapping(db, runId);
       const settings = await loadSettings(db);
+      const required = new Set(settings.requiredFields.map((field) => REQUIRED_AS[field] ?? field));
+      const matched = LEAD_FIELDS.filter((field) => mapping[field]).length;
       const sample = await many<{ payload_json: Record<string, string> }>(
         db,
         "SELECT payload_json FROM raw_records WHERE run_id = $1 ORDER BY row_number LIMIT 5",
@@ -160,64 +183,78 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
       );
       return render(
         c,
-        <Page c={c} title={title} active="imports" sub={sub}>
+        <Page c={c} title={title} active="imports" step="Step 1" crumb={`Import / #${run.id}`} sub={sub}>
           {run.status === "failed" ? <div class="note err">The last attempt failed: {run.error}. No leads were saved. You can try again.</div> : null}
-          <div class="card">
-            <h2>Match the columns</h2>
-            <p class="muted small">
-              Pick which column of the file holds each field. Fields left as "not in this file" stay empty. Required for a
-              valid lead right now: {settings.requiredFields.join(", ") || "nothing"}. Phone numbers with no country code are
-              read as {settings.defaultCountry}.
-            </p>
-            {can(session, "reviewer") ? (
-              <form method="post" action={`/imports/${run.id}/process`}>
-                <Csrf session={session} />
-                <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(220px,1fr));margin-bottom:14px">
-                  {LEAD_FIELDS.map((field) => (
-                    <div>
-                      <label for={`map-${field}`}>{FIELD_LABELS[field]}</label>
-                      <select id={`map-${field}`} name={field}>
-                        <option value="">— not in this file —</option>
-                        {headers.map((header) => (
-                          <option value={header} selected={mapping[field] === header}>
-                            {header}
-                          </option>
-                        ))}
-                      </select>
-                    </div>
-                  ))}
-                </div>
-                <button class="primary" type="submit">
-                  Import {count(run.row_count)} rows
-                </button>
-              </form>
-            ) : (
-              <p class="muted">A reviewer or admin has to finish this import.</p>
-            )}
-          </div>
-          <div class="card">
-            <h2>First rows of the file</h2>
-            <div class="scroll">
-              <table class="small">
-                <thead>
-                  <tr>
+          <form method="post" action={`/imports/${run.id}/process`} class="card flush" style="animation:rzFade 180ms ease">
+            <Csrf session={session} />
+            <div class="card-h" style="align-items:flex-start;padding-bottom:16px">
+              <div style="display:grid;gap:2px">
+                <h2>Match the columns</h2>
+                <span class="muted small">Pick which column of the file holds each field. Fields left as "Not in this file" stay empty.</span>
+              </div>
+              <span class="muted tiny" style="max-width:360px;text-wrap:pretty">
+                {count(matched)} of {LEAD_FIELDS.length} fields were matched from the column names. Check them. Required for a valid
+                lead right now: {settings.requiredFields.map((field) => field.replace("phone_e164", "valid phone").replace("website_domain", "website").replace(/_/g, " ")).join(", ") || "nothing"}.
+                Numbers with no country code are read as {settings.defaultCountry}.
+              </span>
+            </div>
+            <div class="mapgrid">
+              {LEAD_FIELDS.map((field) => (
+                <label>
+                  <span>
+                    {FIELD_LABELS[field]}
+                    {required.has(field) ? <span style="color:var(--bad)"> *</span> : null}
+                  </span>
+                  <select id={`map-${field}`} name={field} disabled={!can(session, "reviewer")} style={required.has(field) && !mapping[field] ? "border-color:#F13C47" : ""}>
+                    <option value="">Not in this file</option>
                     {headers.map((header) => (
-                      <th>{header}</th>
+                      <option value={header} selected={mapping[field] === header}>
+                        {header}
+                      </option>
                     ))}
-                  </tr>
-                </thead>
-                <tbody>
-                  {sample.map((row) => (
+                  </select>
+                </label>
+              ))}
+            </div>
+            <div style="padding:0 24px 20px;display:grid;gap:8px">
+              <span class="eyebrow soft">First rows of the file</span>
+              <div class="scroll" style="border:1px solid var(--line);border-radius:12px">
+                <table class="tiny">
+                  <thead>
                     <tr>
                       {headers.map((header) => (
-                        <td>{row.payload_json[header]}</td>
+                        <th style="border-top:none">{header}</th>
                       ))}
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody>
+                    {sample.map((row) => (
+                      <tr>
+                        {headers.map((header) => (
+                          <td style="white-space:nowrap;max-width:240px;overflow:hidden;text-overflow:ellipsis">
+                            {row.payload_json[header] || <span class="muted">(empty)</span>}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
-          </div>
+            <div class="card-f">
+              <span class="fill muted small">
+                {can(session, "reviewer") ? `Matching is remembered for "${run.source}".` : "A reviewer or admin has to finish this import."}
+              </span>
+              <a class="btn" href="/imports">
+                Later
+              </a>
+              {can(session, "reviewer") ? (
+                <button class="primary lift" type="submit">
+                  Import {count(run.row_count)} rows
+                </button>
+              ) : null}
+            </div>
+          </form>
           <DeleteCard c={c} runId={run.id} db={db} />
         </Page>,
       );
@@ -230,16 +267,13 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
     const closeCompared = Boolean(summary?.closeChecked) || known.close.lists > 0;
     return render(
       c,
-      <Page c={c} title={title} active="imports" sub={sub}>
-        <p>
-          <Chip value={run.status} />
-        </p>
+      <Page c={c} title={title} active="imports" step="Step 1" crumb={`Import / #${run.id}`} sub={sub} aside={<Chip value={run.status} />}>
         {summary ? (
           <>
             {!summary.dncChecked ? (
               <div class="note warn">
                 <b>These leads were not checked against a DNC list</b>, because none was loaded when the file was imported.
-                Upload one on the <a href="/dnc">DNC page</a> and every lead that can still be exported is checked.
+                Upload one on the <a href="/checks">Checks page</a> and every lead that can still be exported is checked.
               </div>
             ) : null}
             {!viciCompared || !closeCompared ? (
@@ -248,24 +282,25 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
                   These leads were not compared with{" "}
                   {[!viciCompared ? "VICIdial" : "", !closeCompared ? "Close" : ""].filter(Boolean).join(" or ")}
                 </b>
-                , because no export from there has been loaded. Upload one on the{" "}
-                <a href="/existing">Existing records page</a> and the leads are compared.
+                , because no export from there has been loaded. Upload one on the <a href="/checks">Checks page</a> and the leads
+                are compared.
               </div>
             ) : null}
-            <div class="grid" style="margin-bottom:18px">
+            <div class="grid">
               {(
                 [
-                  ["in_review", "Sent to review"],
-                  ["duplicate", "Duplicates"],
-                  ["in_vici", viciCompared ? "Already in VICIdial" : "Already in VICIdial (not compared)"],
-                  ["in_close", closeCompared ? "Already in Close" : "Already in Close (not compared)"],
-                  ["blocked_dnc", summary.dncChecked ? "Blocked by DNC" : "Blocked by DNC (not checked)"],
-                  ["invalid", "Invalid rows"],
+                  ["in_review", "Sent to review", ""],
+                  ["duplicate", "Duplicates", ""],
+                  ["in_vici", "Already in VICIdial", viciCompared ? "" : "Not compared"],
+                  ["in_close", "Already in Close", closeCompared ? "" : "Not compared"],
+                  ["blocked_dnc", "Blocked by DNC", summary.dncChecked ? "" : "Not checked"],
+                  ["invalid", "Invalid rows", ""],
                 ] as const
-              ).map(([status, label]) => (
-                <a class="stat" href={`/leads?run=${run.id}&status=${status}`} style="color:inherit">
+              ).map(([status, label, caveat]) => (
+                <a class="stat" href={`/leads?run=${run.id}&status=${status}`}>
                   <b>{count(summary[status] ?? 0)}</b>
-                  <span>{label}</span>
+                  <strong>{label}</strong>
+                  <span>{caveat || "As counted when the file was imported"}</span>
                 </a>
               ))}
             </div>
@@ -318,17 +353,17 @@ async function DeleteCard({ c, runId, db }: { c: Ctx; runId: number; db: Deps["d
     <div class="card">
       <h2>Delete this import</h2>
       {info.inExportBatches > 0 ? (
-        <p class="muted">
+        <p class="muted small">
           {count(info.inExportBatches)} lead(s) from this import are in an export batch, so it cannot be deleted.
         </p>
       ) : pending ? (
-        <p class="muted">
+        <p class="muted small">
           A delete request is waiting for an admin. <a href="/approvals">Open approvals</a>
         </p>
       ) : (
-        <form method="post" action={`/imports/${runId}/request-delete`}>
+        <form method="post" action={`/imports/${runId}/request-delete`} style="display:grid;gap:12px">
           <Csrf session={session} />
-          <p class="small">
+          <p class="muted small">
             This would remove {count(info.leads)} lead(s) and {count(info.rawRecords)} raw row(s) for good. It cannot be undone.
             {info.duplicatesPointingHere > 0
               ? ` ${count(info.duplicatesPointingHere)} lead(s) from other imports that were marked as duplicates of these would go back to review.`
@@ -336,10 +371,10 @@ async function DeleteCard({ c, runId, db }: { c: Ctx; runId: number; db: Deps["d
             Nothing is deleted until an admin approves the request.
           </p>
           <div class="row">
-            <div>
-              <label for="note">Why (shown to the approver)</label>
+            <label>
+              Why (shown to the approver)
               <input id="note" type="text" name="note" placeholder="e.g. wrong column matching" />
-            </div>
+            </label>
             <div class="fit">
               <button class="danger" type="submit">
                 Request delete

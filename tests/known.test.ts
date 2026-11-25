@@ -111,11 +111,19 @@ describe("the existing records page", () => {
     const signIn = await app.request(`http://${host}/login`, { method: "POST", body, headers: { host, origin: `https://${host}` } });
     const cookie = signIn.headers.get("set-cookie")!.split(";")[0]!;
 
-    const page = await (await app.request(`http://${host}/existing`, { headers: { host, cookie } })).text();
-    expect(page).toContain("VICIdial: no file, so no lead has been compared with it");
-    expect(page).not.toContain("Upload an export");
+    // The old address still leads to the Checks screen.
+    const old = await app.request(`http://${host}/existing`, { headers: { host, cookie } });
+    expect(old.status).toBe(303);
+    expect(old.headers.get("location")).toBe("/checks");
+
+    const page = await (await app.request(`http://${host}/checks`, { headers: { host, cookie } })).text();
+    expect(page).toContain("Leads are not compared with what is already in VICIdial.");
+    expect(page).toContain("Leads are not compared with what is already in Close.");
+    expect(page).toContain("No DNC list is loaded.");
+    // A viewer sees the state but gets no upload button.
+    expect(page).not.toContain("Upload VICIdial export");
     const home = await (await app.request(`http://${host}/`, { headers: { host, cookie } })).text();
-    expect(home).toContain("No export from VICIdial or Close is loaded");
+    expect(home).toContain("A DNC list and exports from VICIdial and Close. None is loaded yet.");
     await db.close();
   });
 });

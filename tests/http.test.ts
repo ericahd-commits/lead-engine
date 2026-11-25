@@ -149,11 +149,15 @@ describe("the whole path through the pages", () => {
     expect(message(decided.location, "ok")).toBe("2 lead(s) approved. 1 skipped because their current status does not allow it.");
 
     const created = await rita.post("/exports", { name: "Week 48", target_ref: "VICIdial list 1048" });
-    expect(created.location).toMatch(/^\/exports\/1\?ok=/);
+    // Creating a batch also asks for approval, and says so. It is still not downloadable.
+    expect(message(created.location, "ok")).toBe(
+      "Batch created with 2 lead(s) and approval requested. An admin has to approve before the file can be downloaded.",
+    );
+    expect(created.location).toMatch(/^\/exports\?ok=/);
     const early = await rita.post("/exports/1/download", {}, { referer: "/exports/1" });
     expect(message(early.location, "err")).toBe("This batch has not been approved yet.");
+    expect((await rita.get("/exports")).text).not.toContain("Download CSV");
 
-    await rita.post("/exports/1/request-approval", { note: "First batch" });
     // A reviewer cannot approve, not even their own request.
     expect((await rita.post("/approvals/1/decide", { decision: "approve" })).status).toBe(403);
     expect((await rita.post("/exports/1/download", {}, { referer: "/exports/1" })).status).toBe(303);
@@ -164,6 +168,7 @@ describe("the whole path through the pages", () => {
     const approved = await ann.post("/approvals/1/decide", { decision: "approve" });
     expect(message(approved.location, "ok")).toBe("Batch approved. The file can now be downloaded.");
 
+    expect((await rita.get("/exports")).text).toContain("Download CSV");
     const download = await rita.post("/exports/1/download", {}, { referer: "/exports/1" });
     expect(download.status).toBe(200);
     expect(download.headers.get("content-disposition")).toBe('attachment; filename="lead-engine-1-week-48.csv"');

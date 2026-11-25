@@ -9,9 +9,22 @@ const WHAT: Record<string, string> = {
   known_list: "Delete a VICIdial / Close file",
 };
 
+const KIND: Record<string, string> = {
+  export_batch: "Export",
+  run: "Delete an import",
+  dnc_list: "Delete a DNC list",
+  known_list: "Delete a VICIdial / Close file",
+};
+
+/** One line naming what is being asked for, e.g. "Export a batch of leads #3". */
+export function approvalTitle(item: ApprovalListItem): string {
+  return `${WHAT[item.subject_type] ?? item.subject_type} #${item.subject_id}`;
+}
+
 function subjectLink(item: ApprovalListItem): string | null {
   if (item.subject_type === "export_batch") return `/exports/${item.subject_id}`;
   if (item.subject_type === "run" && item.status === "pending") return `/imports/${item.subject_id}`;
+  if ((item.subject_type === "dnc_list" || item.subject_type === "known_list") && item.status === "pending") return "/checks";
   return null;
 }
 
@@ -32,60 +45,83 @@ export function registerApprovalRoutes(app: App, { db, config }: Deps): void {
         sub="Exports and deletes happen only after an admin approves them here. Nothing else counts as approval."
       >
         {config.requireSecondApprover ? (
-          <div class="note warn small">Two-person rule is on: the person who asked cannot be the one who approves.</div>
+          <div class="note warn">Two-person rule is on: the person who asked cannot be the one who approves.</div>
         ) : null}
-        <h2>Waiting for a decision</h2>
-        {pending.length === 0 ? <div class="card muted">Nothing is waiting.</div> : null}
+        {pending.length === 0 ? (
+          <div class="card empty" style="display:grid;gap:4px">
+            <strong style="color:var(--ink)">Nothing is waiting</strong>
+            <span class="small">Export and delete requests show up here for an admin to decide.</span>
+          </div>
+        ) : null}
         {pending.map((item) => {
           const link = subjectLink(item);
           const own = config.requireSecondApprover && item.requested_by === session.user.id;
           return (
-            <div class="card">
-              <h2>
-                {WHAT[item.subject_type] ?? item.subject_type} {link ? <a href={link}>(open)</a> : null}
-              </h2>
-              <p class="muted small">
-                Requested by {item.requester_name} on {when(item.requested_at)}
-                {item.note ? ` · "${item.note}"` : ""}
-              </p>
-              <Estimate data={item.estimate_json} />
-              {item.estimate_json.dncNeverLoaded === true ? (
-                <div class="note warn" style="margin-top:12px">
-                  <b>No DNC list is loaded.</b> Approving this exports leads that have not been scrubbed against any
-                  do-not-call list.
-                </div>
-              ) : null}
-              {admin && !own ? (
-                <form method="post" action={`/approvals/${item.id}/decide`} style="margin-top:14px">
-                  <Csrf session={session} />
-                  <div class="row">
-                    <div>
-                      <label for={`note-${item.id}`}>Note (optional)</label>
-                      <input id={`note-${item.id}`} type="text" name="note" />
-                    </div>
-                    <div class="fit">
-                      <button class="good" type="submit" name="decision" value="approve">
-                        {item.action_type === "delete" ? "Approve and delete now" : "Approve"}
-                      </button>{" "}
-                      <button class="danger" type="submit" name="decision" value="reject">
-                        Reject
-                      </button>
-                    </div>
+            <form method="post" action={`/approvals/${item.id}/decide`} class="card flush">
+              <Csrf session={session} />
+              <div class="pad" style="display:grid;gap:14px">
+                <div style="display:flex;justify-content:space-between;gap:12px;align-items:flex-start;flex-wrap:wrap">
+                  <div style="display:grid;gap:2px;min-width:0">
+                    <span class="eyebrow">{KIND[item.subject_type] ?? item.subject_type}</span>
+                    <h2 style="margin:0;font-size:18px">
+                      {approvalTitle(item)}{" "}
+                      {link ? (
+                        <a class="small" href={link} style="font-weight:600">
+                          Open
+                        </a>
+                      ) : null}
+                    </h2>
+                    <span class="muted small">
+                      Requested by {item.requester_name} on {when(item.requested_at)}
+                      {item.note ? ` · "${item.note}"` : ""}
+                    </span>
                   </div>
-                </form>
-              ) : (
-                <p class="muted small" style="margin-bottom:0">
-                  {own ? "You asked for this, so another admin has to decide." : "An admin has to decide this."}
-                </p>
-              )}
-            </div>
+                  <Chip value="pending" />
+                </div>
+                <Estimate data={item.estimate_json} />
+                {item.estimate_json.dncNeverLoaded === true ? (
+                  <div class="note warn">
+                    <b>No DNC list is loaded.</b> Approving this exports leads that have not been scrubbed against any
+                    do-not-call list.
+                  </div>
+                ) : null}
+              </div>
+              <div class="card-f">
+                {admin && !own ? (
+                  <>
+                    <input
+                      class="fill"
+                      type="text"
+                      name="note"
+                      placeholder="Note (optional)"
+                      aria-label="Note for this decision"
+                      style="width:auto"
+                    />
+                    {/* Pressing Enter in the note box must never count as a decision. */}
+                    <button type="submit" name="decision" value="" hidden tabindex={-1} aria-hidden="true"></button>
+                    <button class="danger" type="submit" name="decision" value="reject">
+                      Reject
+                    </button>
+                    <button class="primary lift" type="submit" name="decision" value="approve">
+                      {item.action_type === "delete" ? "Approve and delete now" : "Approve"}
+                    </button>
+                  </>
+                ) : (
+                  <span class="fill muted small">
+                    {own ? "You asked for this, so another admin has to decide." : "An admin has to decide this."}
+                  </span>
+                )}
+              </div>
+            </form>
           );
         })}
 
-        <h2 style="margin-top:26px">Decided</h2>
-        <div class="card">
+        <div class="card flush">
+          <div class="card-h">
+            <h2>Decided</h2>
+          </div>
           {decided.length === 0 ? (
-            <p class="muted">No decisions yet.</p>
+            <div class="empty">No decisions yet.</div>
           ) : (
             <div class="scroll">
               <table>
@@ -101,7 +137,7 @@ export function registerApprovalRoutes(app: App, { db, config }: Deps): void {
                 <tbody>
                   {decided.map((item) => {
                     const link = subjectLink(item);
-                    const label = `${WHAT[item.subject_type] ?? item.subject_type} #${item.subject_id}`;
+                    const label = approvalTitle(item);
                     return (
                       <tr>
                         <td>{link ? <a href={link}>{label}</a> : label}</td>
@@ -110,11 +146,11 @@ export function registerApprovalRoutes(app: App, { db, config }: Deps): void {
                         </td>
                         <td>
                           {item.requester_name}
-                          <div class="small muted">{when(item.requested_at)}</div>
+                          <div class="tiny muted">{when(item.requested_at)}</div>
                         </td>
                         <td>
                           {item.decider_name ?? <span class="muted">—</span>}
-                          <div class="small muted">{when(item.decided_at)}</div>
+                          <div class="tiny muted">{when(item.decided_at)}</div>
                         </td>
                         <td>{item.decision_note}</td>
                       </tr>
