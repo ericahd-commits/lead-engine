@@ -17,6 +17,7 @@ function fakeOctoparse(rows: Record<string, unknown>[], options: { status?: numb
     const path = new URL(url);
     if (path.pathname === "/taskGroup") return answer([{ taskGroupId: "g1", taskGroupName: "Gyms" }]);
     if (path.pathname === "/task/search") return answer([{ taskId: "t1", taskName: "Google Maps gyms Dayton" }]);
+    if (path.pathname === "/task/getActions") return answer([{ taskId: "t1", actions: [{ actionType: "LoopAction", loopItems: ["gyms in Dayton OH"] }] }]);
     if (path.pathname === "/data/all") {
       const offset = Number(path.searchParams.get("offset"));
       const size = Number(path.searchParams.get("size"));
@@ -75,10 +76,10 @@ describe("pulling from Octoparse through the pages", () => {
     body.set("_csrf", who.csrf);
     body.set("task_id", "t1");
     body.set("task_name", "Google Maps gyms Dayton");
-    return app.request(`http://${HOST}/imports/octoparse`, {
+    return app.request(`http://${HOST}/scrape`, {
       method: "POST",
       body,
-      headers: { host: HOST, cookie: who.cookie, origin: `https://${HOST}`, referer: `https://${HOST}/imports/octoparse` },
+      headers: { host: HOST, cookie: who.cookie, origin: `https://${HOST}`, referer: `https://${HOST}/scrape` },
     });
   };
 
@@ -88,7 +89,7 @@ describe("pulling from Octoparse through the pages", () => {
     const { fetchImpl, calls } = fakeOctoparse(ROWS);
     const app = createApp({ db, config: testConfig(), fetchImpl });
     const rita = await signIn(app, "rita");
-    const page = await (await app.request(`http://${HOST}/imports/octoparse`, { headers: { host: HOST, cookie: rita.cookie } })).text();
+    const page = await (await app.request(`http://${HOST}/scrape`, { headers: { host: HOST, cookie: rita.cookie } })).text();
     expect(page).toContain("Octoparse is not connected");
     const refused = await pull(app, rita);
     expect(decodeURIComponent(refused.headers.get("location")!.replace(/\+/g, " "))).toContain("Octoparse is not connected");
@@ -100,15 +101,22 @@ describe("pulling from Octoparse through the pages", () => {
     const db = await freshDb();
     await addUser(db, "Rita", "reviewer");
     await addUser(db, "Vic", "viewer");
+    await addUser(db, "Ann", "admin");
     const { fetchImpl } = fakeOctoparse(ROWS);
     const app = createApp({ db, config: testConfig({ octoparseApiKey: "op_sk_test" }), fetchImpl });
     const rita = await signIn(app, "rita");
     const vic = await signIn(app, "vic");
 
-    const page = await (await app.request(`http://${HOST}/imports/octoparse`, { headers: { host: HOST, cookie: rita.cookie } })).text();
+    const page = await (await app.request(`http://${HOST}/scrape`, { headers: { host: HOST, cookie: rita.cookie } })).text();
     expect(page).toContain("Google Maps gyms Dayton");
     expect(page).not.toContain("op_sk_test");
     expect((await pull(app, vic)).status).toBe(403);
+
+    // A task's inputs are shown as received, to admins only.
+    const inputsUrl = `http://${HOST}/scrape/inputs?task_id=t1&task_name=Gyms`;
+    expect((await app.request(inputsUrl, { headers: { host: HOST, cookie: rita.cookie } })).status).toBe(403);
+    const ann = await signIn(app, "ann");
+    expect(await (await app.request(inputsUrl, { headers: { host: HOST, cookie: ann.cookie } })).text()).toContain("gyms in Dayton OH");
 
     const pulled = await pull(app, rita);
     expect(pulled.headers.get("location")).toMatch(/^\/imports\/1\?ok=Pulled\+2\+rows/);

@@ -11,7 +11,7 @@ This is Phase 0–1 of the Lead Engine briefing dated 24 Nov 2026. It writes to 
 | Step | What happens |
 |---|---|
 | Import | Upload a CSV (for example an Octoparse Desktop export). Every row is stored untouched in `raw_records`. You match the file's columns to lead fields; the matching is remembered per source name. |
-| Pull from Octoparse | Optional. Pick a task and its collected rows come in as an import, through the same column matching as a file. Read-only (`GET` requests only): the app does not start a run, change a task or its keywords, or mark data as exported. Keywords, category and location are set inside the Octoparse task. |
+| Scrape | Optional (`/scrape`). Pick an Octoparse task and its collected rows come in as an import, through the same column matching as a file. Admins can also see a task's inputs. Read-only: the app does not start a run, change a task or its keywords, or mark data as exported. Keywords, category and location are set inside the Octoparse task. |
 | Normalize | Phone to E.164, website to its host, trimmed names and addresses. |
 | Validate | A row missing a required field is kept, marked `invalid`, and shows why. |
 | Dedupe | Against earlier rows of the same file and every lead already in the database. A duplicate links to the lead it repeats. A reviewer can overrule it with a reason. |

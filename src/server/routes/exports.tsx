@@ -28,7 +28,7 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
         c={c}
         title="Export"
         active="exports"
-        step="Step 4"
+        step="Step 5"
         sub="Approved leads leave the app in batches, as a CSV file. Each batch needs an admin's approval before its file can be downloaded."
       >
         {can(session, "reviewer") ? (
@@ -151,7 +151,7 @@ export function registerExportRoutes(app: App, { db, config }: Deps): void {
 
     return render(
       c,
-      <Page c={c} title={`Batch #${batch.id}: ${batch.name}`} active="exports" step="Step 4" crumb={`Export / #${batch.id}`} sub={`${count(leads.length)} lead(s) · created ${when(batch.created_at)}`}>
+      <Page c={c} title={`Batch #${batch.id}: ${batch.name}`} active="exports" step="Step 5" crumb={`Export / #${batch.id}`} sub={`${count(leads.length)} lead(s) · created ${when(batch.created_at)}`}>
         <div class="card">
           <dl class="kv">
             <dt>Status</dt>

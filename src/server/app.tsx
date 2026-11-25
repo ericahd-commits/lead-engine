@@ -231,8 +231,8 @@ export function createApp(deps: Deps): Hono<Env> {
     const stages: { step: string; n: number; label: string; sub: string; href: string }[] = [
       { step: "Imported", n: total, label: "All leads", sub: `From ${count(files?.count ?? 0)} file(s)`, href: "/leads?tab=all" },
       { step: "Held back", n: held, label: "Not sent to review", sub: "Duplicates, already in VICIdial or Close, DNC, invalid", href: "/leads?tab=held" },
-      { step: "Step 3", n: by("in_review"), label: "In review", sub: `${count(needsInfo)} need info · ${count(by("rejected"))} rejected so far`, href: "/leads" },
-      { step: "Step 4", n: by("approved"), label: "Approved", sub: "Not exported yet", href: "/exports" },
+      { step: "Step 4", n: by("in_review"), label: "In review", sub: `${count(needsInfo)} need info · ${count(by("rejected"))} rejected so far`, href: "/leads" },
+      { step: "Step 5", n: by("approved"), label: "Approved", sub: "Not exported yet", href: "/exports" },
       { step: "Done", n: by("exported"), label: "Exported", sub: "Downloaded as CSV", href: "/leads?status=exported" },
     ];
 
@@ -248,27 +248,39 @@ export function createApp(deps: Deps): Hono<Env> {
           <div class="card" style="padding:32px;display:grid;gap:20px">
             <div style="display:grid;gap:4px;max-width:560px">
               <h2 style="margin:0;font-size:18px">Let's get your first leads in</h2>
-              <p class="muted">Three steps. Nothing leaves the app until an admin approves it.</p>
+              <p class="muted">Four steps. Nothing leaves the app until an admin approves it.</p>
             </div>
             <div class="onb">
               <div>
                 <span class="eyebrow">Step 1</span>
-                <strong>Upload a scraped CSV</strong>
-                <span class="muted small">Match its columns and the rows become leads.</span>
+                <strong>Scrape with Octoparse</strong>
+                <span class="muted small">
+                  {config.octoparseApiKey
+                    ? "Keywords and category go in the Octoparse task. Pick a task here to pull its rows in."
+                    : "Keywords and category go in the Octoparse task. Octoparse is not connected to this app yet."}
+                </span>
               </div>
               <div>
                 <span class="eyebrow">Step 2</span>
+                <strong>Import the rows</strong>
+                <span class="muted small">Pull them from Octoparse or upload a CSV, then match the columns.</span>
+              </div>
+              <div>
+                <span class="eyebrow">Step 3</span>
                 <strong>Load your checks</strong>
                 <span class="muted small">A DNC list and exports from VICIdial and Close. None is loaded yet.</span>
               </div>
               <div>
-                <span class="eyebrow">Step 3</span>
+                <span class="eyebrow">Steps 4 and 5</span>
                 <strong>Review and export</strong>
                 <span class="muted small">Approve leads, batch them, get sign-off.</span>
               </div>
             </div>
             <div>
-              <a class="btn primary lift" href="/imports">
+              <a class="btn primary lift" href="/scrape">
+                {config.octoparseApiKey ? "Pull from Octoparse" : "Connect Octoparse"}
+              </a>{" "}
+              <a class="btn" href="/imports">
                 Upload a CSV
               </a>
             </div>
@@ -345,8 +357,7 @@ export function createApp(deps: Deps): Hono<Env> {
     );
   });
 
-  // Before the import routes, so /imports/octoparse is not read as an import number.
-  registerOctoparseRoutes(app, deps);
+    registerOctoparseRoutes(app, deps);
   registerImportRoutes(app, deps);
   registerLeadRoutes(app, deps);
   registerCheckRoutes(app, deps);

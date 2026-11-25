@@ -47,7 +47,7 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
 
     return render(
       c,
-      <Page c={c} title="Import" active="imports" step="Step 1" sub="Upload a CSV export, match its columns, and the rows become leads.">
+      <Page c={c} title="Import" active="imports" step="Step 2" sub="Upload a CSV export, match its columns, and the rows become leads.">
         {can(session, "reviewer") ? (
           <form method="post" action="/imports" enctype="multipart/form-data" class="card upload">
             <Csrf session={session} />
@@ -88,14 +88,14 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
         ) : null}
         <div class="card" style="display:flex;gap:16px;align-items:center;justify-content:space-between;flex-wrap:wrap">
           <div style="display:grid;gap:2px">
-            <strong>Or pull straight from Octoparse</strong>
+            <strong>Or pull straight from Octoparse (Step 1, Scrape)</strong>
             <span class="muted small">
               {config.octoparseApiKey
                 ? "Pick a task and bring in the rows it has already collected. Keywords and category stay in the Octoparse task."
                 : "Not connected yet. Once the Octoparse API key is added to the server, tasks can be pulled in without a file."}
             </span>
           </div>
-          <a class="btn" href="/imports/octoparse">
+          <a class="btn" href="/scrape">
             {config.octoparseApiKey ? "Choose a task" : "How to connect"}
           </a>
         </div>
@@ -196,7 +196,7 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
       );
       return render(
         c,
-        <Page c={c} title={title} active="imports" step="Step 1" crumb={`Import / #${run.id}`} sub={sub}>
+        <Page c={c} title={title} active="imports" step="Step 2" crumb={`Import / #${run.id}`} sub={sub}>
           {run.status === "failed" ? <div class="note err">The last attempt failed: {run.error}. No leads were saved. You can try again.</div> : null}
           <form method="post" action={`/imports/${run.id}/process`} class="card flush" style="animation:rzFade 180ms ease">
             <Csrf session={session} />
@@ -280,7 +280,7 @@ export function registerImportRoutes(app: App, { db, config }: Deps): void {
     const closeCompared = Boolean(summary?.closeChecked) || known.close.lists > 0;
     return render(
       c,
-      <Page c={c} title={title} active="imports" step="Step 1" crumb={`Import / #${run.id}`} sub={sub} aside={<Chip value={run.status} />}>
+      <Page c={c} title={title} active="imports" step="Step 2" crumb={`Import / #${run.id}`} sub={sub} aside={<Chip value={run.status} />}>
         {summary ? (
           <>
             {!summary.dncChecked ? (

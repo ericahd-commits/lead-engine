@@ -286,10 +286,11 @@ export const Page: FC<{
     { href: "/approvals", label: "Approvals", key: "approvals", tag: "Ap", badge: nav.pending },
   ];
   const steps: NavItem[] = [
-    { href: "/imports", label: "Import", key: "imports", tag: "1", hint: "Upload and match columns", badge: nav.unmapped },
-    { href: "/checks", label: "Checks", key: "checks", tag: "2", hint: "DNC, VICIdial, Close" },
-    { href: "/leads", label: "Review", key: "review", tag: "3", hint: "Approve or reject", badge: nav.inReview },
-    { href: "/exports", label: "Export", key: "exports", tag: "4", hint: "Batches and downloads" },
+    { href: "/scrape", label: "Scrape", key: "scrape", tag: "1", hint: "Octoparse tasks" },
+    { href: "/imports", label: "Import", key: "imports", tag: "2", hint: "Upload and match columns", badge: nav.unmapped },
+    { href: "/checks", label: "Checks", key: "checks", tag: "3", hint: "DNC, VICIdial, Close" },
+    { href: "/leads", label: "Review", key: "review", tag: "4", hint: "Approve or reject", badge: nav.inReview },
+    { href: "/exports", label: "Export", key: "exports", tag: "5", hint: "Batches and downloads" },
   ];
   const more: NavItem[] = [
     { href: "/audit-log", label: "Audit log", key: "audit", tag: "Lg" },

@@ -122,7 +122,7 @@ export function registerCheckRoutes(app: App, { db, config }: Deps): void {
         c={c}
         title="Checks"
         active="checks"
-        step="Step 2"
+        step="Step 3"
         sub="Leads are matched against the files you upload here, by phone number only. Each file is a snapshot as of the day it was exported. Uploading a new one re-checks every lead that can still be exported."
       >
         <div class="grid" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:16px;align-items:start">

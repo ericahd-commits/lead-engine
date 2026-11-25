@@ -427,7 +427,7 @@ export function registerLeadRoutes(app: App, { db }: Deps): void {
         c={c}
         title="Review"
         active="review"
-        step="Step 3"
+        step="Step 4"
         sub="Leads that passed the automatic checks. Approve, reject, or ask for more info."
         aside={
           reviewer ? (

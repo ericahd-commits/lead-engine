@@ -1,20 +1,23 @@
 import { stringify } from "csv-stringify/sync";
 
-// Read-only client for the Octoparse OpenAPI (https://openapi.octoparse.com). It lists tasks and
-// reads the rows a task has already collected. It never starts a run, changes a task or marks
-// data as exported: those write to Octoparse and are not built.
+// Read-only client for the Octoparse OpenAPI (https://openapi.octoparse.com). It lists tasks,
+// reads the rows a task has already collected, and reads a task's inputs. It never starts a run,
+// changes a task or marks data as exported: those write to Octoparse and are not built.
 //
 // Shapes are the ones in Octoparse's published spec (read 25 Nov 2026):
 //   GET /taskGroup                      -> { data: [{ taskGroupId, taskGroupName }] }
 //   GET /task/search?taskGroupId=       -> { data: [{ taskId, taskName }] }
 //   GET /data/all?taskId=&offset=&size= -> { data: { data: [row], total, restTotal, offset } }
+//   POST /task/getActions { taskIds, actionTypes } -> { data: [{ taskId, actions: [...] }] }
+//     ("Get Action Parameters": a read sent as POST. Professional or Enterprise plan only.
+//      TODO: the spec does not describe the items of "actions", so they are shown as received.)
 // TODO: the spec does not say what the largest page size is, or what the returned "offset"
 // means. PAGE_SIZE is a cautious choice, and the next offset is the returned one only when it
 // moves forward; otherwise the rows received are counted.
 
 export class OctoparseError extends Error {}
 
-export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; signal?: AbortSignal }) => Promise<{
+export type FetchLike = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) => Promise<{
   ok: boolean;
   status: number;
   text(): Promise<string>;
@@ -26,12 +29,13 @@ const BASE = "https://openapi.octoparse.com";
 const PAGE_SIZE = 500;
 const TIMEOUT_MS = 30_000;
 
-async function call(fetchImpl: FetchLike, apiKey: string, path: string): Promise<unknown> {
+async function call(fetchImpl: FetchLike, apiKey: string, path: string, post?: unknown): Promise<unknown> {
   let response: Awaited<ReturnType<FetchLike>>;
   try {
     response = await fetchImpl(`${BASE}${path}`, {
-      method: "GET",
-      headers: { "x-api-key": apiKey, accept: "application/json" },
+      method: post === undefined ? "GET" : "POST",
+      headers: { "x-api-key": apiKey, accept: "application/json", ...(post === undefined ? {} : { "content-type": "application/json" }) },
+      ...(post === undefined ? {} : { body: JSON.stringify(post) }),
       signal: AbortSignal.timeout(TIMEOUT_MS),
     });
   } catch (error) {
@@ -99,6 +103,16 @@ export async function fetchTaskRows(
     offset = typeof data.offset === "number" && data.offset > offset ? data.offset : offset + batch.length;
   }
   throw new OctoparseError("Octoparse kept sending rows past the import limit. Nothing was imported.");
+}
+
+// What a task is set up to search for (its URL list, text list, typed text), exactly as Octoparse
+// returns it. Reading only: nothing in the task is changed.
+export async function getTaskInputs(fetchImpl: FetchLike, apiKey: string, taskId: string): Promise<unknown> {
+  const answer = await call(fetchImpl, apiKey, "/task/getActions", {
+    taskIds: [taskId],
+    actionTypes: ["LoopAction", "NavigateAction", "EnterTextAction"],
+  });
+  return isRecord(answer) ? answer.data : answer;
 }
 
 // The rows as a CSV, so they enter through exactly the same door as an uploaded file.
