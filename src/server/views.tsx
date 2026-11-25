@@ -320,8 +320,8 @@ export const Page: FC<{
           <div class="writes">
             <strong>External writes are {nav.externalWrites ? "on" : "off"}</strong>
             <span>
-              This build connects to nothing outside. Close and VICIdial are known only from uploaded files, and exports are CSV
-              files.
+              This build writes to nothing outside and spends nothing. Octoparse is only read. Close and VICIdial are known only
+              from uploaded files, and exports are CSV files.
             </span>
           </div>
         </aside>
