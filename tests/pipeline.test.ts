@@ -68,6 +68,20 @@ describe("reading CSV files", () => {
     });
     expect(guessMapping(headers, { business_name: "Biz" }).business_name).toBe("Biz");
   });
+
+  it("matches the columns of an Apify Google Maps enrichment file", () => {
+    const apify = ["searchString", "GOOGLE_TITLE", "GOOGLE_PLACE_ID", "GOOGLE_TOTALSCORE", "GOOGLE_CATEGORYNAME", "STREET", "CITY", "STATE", "POSTAL_CODE", "WEBSITE", "PHONE", "PHONE_UNFORMATTED"];
+    expect(guessMapping(apify)).toMatchObject({
+      business_name: "GOOGLE_TITLE",
+      phone: "PHONE",
+      website: "WEBSITE",
+      address: "STREET",
+      city: "CITY",
+      region: "STATE",
+      postal_code: "POSTAL_CODE",
+      category: "GOOGLE_CATEGORYNAME",
+    });
+  });
 });
 
 const FILE = [

@@ -31,7 +31,7 @@ export const FIELD_LABELS: Record<LeadField, string> = {
 export type ColumnMapping = Record<LeadField, string>;
 
 const SYNONYMS: Record<LeadField, string[]> = {
-  business_name: ["business name", "company name", "company", "business", "name", "title", "place name", "store name"],
+  business_name: ["business name", "company name", "company", "business", "name", "title", "place name", "store name", "google title"],
   phone: ["phone", "phone number", "telephone", "tel", "phone 1", "contact phone", "business phone", "mobile"],
   website: ["website", "web site", "url", "site", "domain", "homepage", "web", "website url"],
   email: ["email", "e-mail", "email address", "contact email"],
@@ -41,7 +41,7 @@ const SYNONYMS: Record<LeadField, string[]> = {
   region: ["state", "region", "province", "state/region", "st"],
   postal_code: ["zip", "zip code", "postal code", "postcode", "postal"],
   country: ["country", "country code"],
-  category: ["category", "categories", "industry", "type", "vertical", "business type", "niche"],
+  category: ["category", "categories", "industry", "type", "vertical", "business type", "niche", "category name", "categoryname", "google categoryname"],
 };
 
 const simplify = (value: string) => value.toLowerCase().replace(/[_\-.]+/g, " ").replace(/\s+/g, " ").trim();
